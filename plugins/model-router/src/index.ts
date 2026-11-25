@@ -4,9 +4,11 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-app-boot'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type {} from '@deepseek-ai/dsh-commands'
+import type {} from '@deepseek-ai/dsh-client-connection'
 import { isAgentLoopRequest, type GenerateOptions, type ReasoningEffortId, type StreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session'
 import { Config, type ModelConfig } from './config.js'
+import { HealthProbeRunner } from './health.js'
 import { MetricsStore, type RequestOutcome } from './metrics.js'
 import { createUsageReport, formatUsageReport } from './report.js'
 import { assessTask, describeDecision, selectRoute, type RouteDecision, type TaskInput } from './routing.js'
@@ -14,8 +16,9 @@ import { routeLabel } from './usage.js'
 
 export { Config } from './config.js'
 export type { Config as ModelRouterConfig, ModelConfig, SubscriptionConfig } from './config.js'
+export { HealthProbeRunner } from './health.js'
 export { MetricsStore, applyMeasurement, emptyMetricsState, metricsStateSchema } from './metrics.js'
-export type { MetricsState, RequestMeasurement, RouteStats } from './metrics.js'
+export type { DailyBucket, MetricsState, RequestMeasurement, RouteHealth, RouteStats } from './metrics.js'
 export { createUsageReport, formatUsageReport } from './report.js'
 export { assessTask, currentWindowStart, describeDecision, nearestEffort, selectRoute } from './routing.js'
 export type { RouteDecision, TaskAssessment, TaskInput } from './routing.js'
@@ -53,10 +56,15 @@ function usageText(): string {
   return 'Use /model-route status, auto, off, preview <task>, report, good, or bad.'
 }
 
-async function validateModels(ctx: Context, config: Config): Promise<ModelConfig[]> {
+async function validateModels(
+  ctx: Context,
+  config: Config,
+  onUnavailable: (model: ModelConfig, code: string) => Promise<void>,
+): Promise<ModelConfig[]> {
   const available: ModelConfig[] = []
   for (const model of config.models) {
     const reasoningEfforts: ModelConfig['reasoningEfforts'] = []
+    let unavailableCode = 'UNKNOWN'
     for (const effort of model.reasoningEfforts) {
       try {
         await ctx.llm.prepareCall({
@@ -66,26 +74,37 @@ async function validateModels(ctx: Context, config: Config): Promise<ModelConfig
         })
         reasoningEfforts.push(effort)
       } catch (error: unknown) {
+        const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : 'UNKNOWN'
+        unavailableCode = code
         ctx.logger.warn(`model-router: excluding ${routeLabel(model.provider, model.model)} at ${effort}: %o`, error)
       }
     }
     if (reasoningEfforts.length > 0) available.push({ ...model, reasoningEfforts })
+    else await onUnavailable(model, unavailableCode)
   }
   return available
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  const availableModels = await validateModels(ctx, config)
-  const routingConfig: Config = { ...config, models: availableModels }
   const metrics = await MetricsStore.load(resolve(ctx.profileContext.dir, config.stateFile), config)
+  const availableModels = await validateModels(ctx, config, async (model, code) => {
+    await metrics.markUnavailable(model.provider, model.model, code, new Date())
+  })
+  const routingConfig: Config = { ...config, models: availableModels }
+  new HealthProbeRunner(ctx, { ...config, models: availableModels }, metrics).start()
   const automatic = new Map<string, boolean>()
   const lastDecisions = new Map<string, RouteDecision>()
   const lastObservedRoutes = new Map<string, ObservedRoute>()
   const activeSessions = new Set<string>()
+  let routingEnabled = config.enabled
 
   const choose = (input: TaskInput): RouteDecision | undefined => {
+    const now = new Date()
     const assessment = assessTask(routingConfig, input)
-    return selectRoute(routingConfig, assessment, metrics.quotaBySubscription(new Date()))
+    const models = availableModels.filter(model => metrics.isRoutable(model.provider, model.model, now))
+    return selectRoute({ ...routingConfig, models }, assessment, metrics.quotaBySubscription(now))
   }
 
   ctx.on('agent/created', ({ agent }) => {
@@ -95,7 +114,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   ctx.on('agent/inbox/claimed', ({ agent, message }) => {
     activeSessions.add(agent.session.id)
-    if (!config.enabled || automatic.get(agent.session.id) === false || !config.sourceKinds.includes(message.source.kind)) return
+    if (!routingEnabled || automatic.get(agent.session.id) === false || !config.sourceKinds.includes(message.source.kind)) return
     let reservationId: string | undefined
     try {
       const decision = choose(taskInput(message))
@@ -144,6 +163,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     const startedAt = Date.now()
     const reservationId = metrics.claimReservation(sessionId, options.provider, options.model)
     let usage: TokenUsage | undefined
+    let failureCode: string | undefined
     let outcome: RequestOutcome = options.signal?.aborted ? 'aborted' : 'failed'
     try {
       for await (const chunk of stream) {
@@ -153,6 +173,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           else if (chunk.reason.kind === 'max-tokens') outcome = 'truncated'
           else if (chunk.reason.kind === 'aborted') outcome = 'aborted'
           else outcome = 'failed'
+          if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') failureCode = chunk.reason.failure.code
         }
         yield chunk
       }
@@ -165,6 +186,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           ...(usage === undefined ? {} : { usage }),
           latencyMs: Date.now() - startedAt,
           outcome,
+          ...(failureCode === undefined ? {} : { failureCode }),
           now: new Date(),
         }, reservationId)
       } catch (error: unknown) {
@@ -172,6 +194,52 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       }
     }
   }
+
+  const reportValue = () => ({
+    ...createUsageReport(metrics.snapshot(), config, new Date(), metrics.persistenceError()),
+    generatedAt: new Date().toISOString(),
+    strategy: config.strategy,
+    routingEnabled,
+    activeProbes: config.models.filter(model => model.healthProbe)
+      .map(model => routeLabel(model.provider, model.model)),
+  })
+  const registerDashboardRoutes = (connection: Context['connection']): void => {
+    connection.fetch.register({
+      path: '/api/model-router/report',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (request) => {
+        try {
+          request.signal.throwIfAborted()
+          return Response.json(reportValue())
+        } catch (error: unknown) {
+          if (request.signal.aborted) throw error
+          ctx.logger.warn('model-router: dashboard report failed: %o', error)
+          return Response.json({ error: 'The model-router report is unavailable.' }, { status: 500 })
+        }
+      },
+    })
+    connection.fetch.register({
+      path: '/api/model-router/set-routing',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (request) => {
+        try {
+          const payload: unknown = await request.json()
+          if (typeof payload !== 'object' || payload === null || !('enabled' in payload) || typeof payload.enabled !== 'boolean') {
+            return Response.json({ error: 'The enabled field must be a boolean.' }, { status: 400 })
+          }
+          routingEnabled = payload.enabled
+          return Response.json({ enabled: routingEnabled })
+        } catch {
+          return Response.json({ error: 'The routing request is invalid.' }, { status: 400 })
+        }
+      },
+    })
+  }
+  const existingConnection = ctx.get('connection')
+  if (existingConnection !== undefined) registerDashboardRoutes(existingConnection)
+  else ctx.inject(['connection'], scope => registerDashboardRoutes(scope.connection))
 
   ctx.inject(['commands'], (commandCtx) => {
     commandCtx.effect(() => commandCtx.commands.register({
@@ -215,7 +283,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           const current = agent.model.current()
           const last = lastDecisions.get(sessionId)
           const lines = [
-            `Automatic routing: ${config.enabled && automatic.get(sessionId) !== false ? 'on' : 'off'}; strategy: ${config.strategy}.`,
+            `Automatic routing: ${routingEnabled && automatic.get(sessionId) !== false ? 'on' : 'off'}; strategy: ${config.strategy}.`,
             `Current model: ${current === undefined ? 'none' : routeLabel(current.provider, current.model)}${current?.reasoningEffort === undefined ? '' : ` at ${current.reasoningEffort}`}.`,
           ]
           if (last !== undefined) lines.push(`Last task decision: ${describeDecision(last)}.`)

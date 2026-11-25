@@ -11,16 +11,18 @@ import { markAgentLoopRequest, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { apply, Config, MetricsStore } from '../src/index.js'
 
 type Listener = (...args: never[]) => void | AsyncIterable<StreamChunk>
+type FetchRouteHandler = (request: Request) => Promise<Response>
 
-async function fixture() {
+async function fixture(unsupportedEffort?: string) {
   const directory = await mkdtemp(join(tmpdir(), 'model-router-runtime-'))
   const listeners = new Map<string, Listener>()
+  const rpcHandlers = new Map<string, FetchRouteHandler>()
   let commandHandler: CommandDefinition['handler'] | undefined
   const ctx = Object.assign(new Context(), {
     profileContext: { dir: directory },
     llm: {
-      async prepareCall(selection: { provider: string }) {
-        if (selection.provider === 'unavailable') throw new Error('no adapter')
+      async prepareCall(selection: { provider: string; reasoningEffort?: string }) {
+        if (selection.provider === 'unavailable' || selection.reasoningEffort === unsupportedEffort) throw new Error('no adapter')
         return {}
       },
     },
@@ -29,7 +31,9 @@ async function fixture() {
       listeners.set(event, listener)
       return () => listeners.delete(event)
     },
-    inject(_services: string[], callback: (context: Context) => void) { callback(commandContext) },
+    inject(services: string[], callback: (context: Context) => void) {
+      callback(services.includes('connection') ? rpcContext : commandContext)
+    },
   })
   const commandContext = Object.assign(new Context(), {
     commands: {
@@ -39,6 +43,16 @@ async function fixture() {
       },
     },
     effect(callback: () => () => void) { return callback() },
+  })
+  const rpcContext = Object.assign(new Context(), {
+    connection: {
+      fetch: {
+        register(route: { path: string; fetch: FetchRouteHandler }) {
+          rpcHandlers.set(route.path, route.fetch)
+          return async () => { rpcHandlers.delete(route.path) }
+        },
+      },
+    },
   })
   const config = Config.parse({
     stateFile: 'metrics.json',
@@ -87,7 +101,7 @@ async function fixture() {
     assert.ok(commandHandler)
     return await commandHandler({ agent, rawInput } as CommandInvocation)
   }
-  return { directory, listeners, selections, agent, invokeCommand }
+  return { directory, listeners, rpcHandlers, selections, agent, invokeCommand }
 }
 
 describe('mounted plugin behavior', () => {
@@ -151,6 +165,42 @@ describe('mounted plugin behavior', () => {
       if (index < 2) sessionEvent(agent.session as never, { type: 'turn/end' } as never)
     }
     assert.equal(selections.length, 3)
+  })
+
+  it('given_dashboard_routes_when_registered_then_they_use_owner_checked_connection_paths', async () => {
+    const { rpcHandlers } = await fixture()
+    assert.ok(rpcHandlers.has('/api/model-router/report'))
+    assert.ok(rpcHandlers.has('/api/model-router/set-routing'))
+  })
+
+  it('given_owner_fetch_when_pausing_and_resuming_then_claimed_tasks_follow_the_live_state', async () => {
+    const { listeners, rpcHandlers, selections, agent } = await fixture()
+    const setRouting = rpcHandlers.get('/api/model-router/set-routing')
+    const reportRoute = rpcHandlers.get('/api/model-router/report')
+    const claimed = listeners.get('agent/inbox/claimed')
+    assert.ok(setRouting)
+    assert.ok(reportRoute)
+    assert.ok(claimed)
+    const routingRequest = (enabled: unknown) => new Request('http://localhost/api/model-router/set-routing', {
+      method: 'POST', body: JSON.stringify({ enabled }),
+    })
+    const paused = await setRouting(routingRequest(false))
+    assert.equal(paused.status, 200)
+    const message = { source: { kind: 'user' }, content: [{ type: 'text', text: 'Implement a security refactor' }] }
+    claimed({ agent, message } as never)
+    assert.equal(selections.length, 0)
+    const reportResponse = await reportRoute(new Request('http://localhost/api/model-router/report', { method: 'POST', body: 'null' }))
+    const report = await reportResponse.json() as {
+      routingEnabled: boolean
+      routes: { health: { status: string } }[]
+    }
+    assert.equal(report.routingEnabled, false)
+    assert.ok(report.routes.some(route => route.health.status === 'unhealthy'))
+    await setRouting(routingRequest(true))
+    claimed({ agent, message } as never)
+    assert.equal(selections.length, 1)
+    const invalid = await setRouting(routingRequest('yes'))
+    assert.equal(invalid.status, 400)
   })
 
   it('given_an_agent_loop_stream_when_drained_then_usage_and_outcome_are_persisted', async () => {

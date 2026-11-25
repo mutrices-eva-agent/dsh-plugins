@@ -41,6 +41,7 @@ const modelSchema = z.object({
   input: z.array(z.enum(['text', 'image'])).min(1).default(['text']),
   reasoningEfforts: z.array(effort).min(1).default([...REASONING_EFFORTS]),
   contextWindow: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  healthProbe: z.boolean().default(false),
   billing: billingSchema,
 }).strict()
 
@@ -69,6 +70,15 @@ export const Config = z.object({
   sourceKinds: z.array(z.string().min(1)).min(1).default(['user']),
   stateFile: z.string().min(1).default('.model-router/metrics-v2.json'),
   lockWaitMs: z.number().int().positive().max(120000).default(5000),
+  dailyRetentionDays: z.number().int().min(7).max(366).default(31),
+  health: z.object({
+    failureThreshold: z.number().int().min(1).max(20).default(3),
+    degradedLatencyMs: nonNegativeInteger.default(30000),
+    retryAfterMs: z.number().int().positive().max(86400000).default(60000),
+    probeIntervalMs: z.number().int().min(1000).max(86400000).default(60000),
+    probeTimeoutMs: z.number().int().positive().max(120000).default(10000),
+    probeMaxOutputTokens: z.number().int().min(1).max(64).default(1),
+  }).strict().prefault({}),
   models: z.array(modelSchema).default([]),
   subscriptions: z.array(subscriptionSchema).default([]),
   weights: z.object({

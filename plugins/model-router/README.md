@@ -37,6 +37,10 @@ The default classifier combines configurable text signals, length thresholds, an
 
 The default weights are quality 35, speed 20, cash 25, and quota 20. Balanced cost uses pay-as-you-go estimates and, when subscription window cost and quota limit are known, allocated subscription value. Set weights to match the desired tradeoff.
 
+## Dashboard
+
+The Web client adds **Model routes** to the DSH left sidebar. The dashboard shows actual request totals, outcomes, recent daily output usage, exact cash and current-window quota, route efficiency, user-rated success, and health. Refresh reads the owner-only authenticated host endpoint and never sends a model request. **Pause routing** suspends automatic model selection without stopping metering or health monitoring. Loading, empty, error, narrow, and populated states are supported.
+
 ## Commands
 
 - `/model-route` or `/model-route status`: automatic state, current model, and last task decision.
@@ -62,6 +66,14 @@ The report separates:
 - transport completion from user-rated success.
 
 Metrics are stored as validated versioned JSON at `.model-router/metrics-v2.json` in the active DSH profile by default. DSH's locked atomic-write helper serializes writers and replays pending measurements onto the latest disk state, preventing one process from overwriting another's recorded usage. `lockWaitMs` bounds writer-lock acquisition. A corrupt existing file stops plugin loading and is not replaced. A later write failure is logged and shown in the report.
+
+## Health checks
+
+Passive health monitoring always uses startup validation and real request outcomes. A failed request makes a route degraded; `health.failureThreshold` consecutive failures make it unavailable for selection until `health.retryAfterMs` elapses. Completed requests restore health unless latency reaches `health.degradedLatencyMs`. User cancellation is not a provider failure. Only structured failure codes are retained, never raw provider messages, prompts, responses, or credentials.
+
+Active probes are off by default. Set `healthProbe: true` on an individual model to enable a bounded one-token probe at `health.probeIntervalMs`, with `health.probeTimeoutMs` and `health.probeMaxOutputTokens` limits. Probes are non-overlapping, abort during teardown, and their usage is included in request, cash, and quota accounting. Enabling them can spend money or subscription quota. Dashboard refresh itself never probes.
+
+`dailyRetentionDays` bounds UTC daily usage buckets; old v2 files load with empty daily/health sections and retain all existing totals.
 
 ## Limits
 

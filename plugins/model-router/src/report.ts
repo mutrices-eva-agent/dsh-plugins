@@ -1,5 +1,5 @@
 import type { Config } from './config.js'
-import type { MetricsState, RouteStats } from './metrics.js'
+import { emptyRouteStats, type DailyBucket, type MetricsState, type RouteHealth, type RouteStats } from './metrics.js'
 import { currentWindowStart } from './routing.js'
 import {
   NANO_QUOTA_PER_MILLI_UNIT,
@@ -28,6 +28,10 @@ export interface RouteReport {
   cashMicroUsdPer1kOutputTokens: string | null
   outputTokensPerQuotaUnit: string | null
   ratedSuccessBasisPoints: number | null
+  ratedGood: number
+  ratedBad: number
+  health: RouteHealth
+  daily: ({ date: string } & DailyBucket)[]
 }
 
 export interface UsageReport {
@@ -45,6 +49,7 @@ export interface UsageReport {
     cashMicroUsd: string
     quotaMilliUnits: string
   }
+  healthSummary: Record<RouteHealth['status'], number>
   persistenceError?: string
 }
 
@@ -52,7 +57,7 @@ function divide(numerator: bigint, denominator: bigint): string | null {
   return denominator === 0n ? null : (numerator / denominator).toString()
 }
 
-function routeReport(key: string, stats: RouteStats, config: Config): RouteReport {
+function routeReport(key: string, stats: RouteStats, state: MetricsState, config: Config): RouteReport {
   const [provider = '', model = ''] = key.split('\0')
   const configured = config.models.find(item => routeKey(item.provider, item.model) === key)
   const requests = BigInt(stats.requests)
@@ -80,6 +85,11 @@ function routeReport(key: string, stats: RouteStats, config: Config): RouteRepor
     cashMicroUsdPer1kOutputTokens: divide(cashPicoUsd * 1000n, output * PICO_USD_PER_MICRO_USD),
     outputTokensPerQuotaUnit: divide(output * NANO_QUOTA_PER_UNIT, quotaNanoUnits),
     ratedSuccessBasisPoints: ratioBasisPoints(BigInt(stats.ratedGood), BigInt(stats.ratedGood + stats.ratedBad)),
+    ratedGood: stats.ratedGood,
+    ratedBad: stats.ratedBad,
+    health: { ...(state.health[key] ?? { status: 'unknown', consecutiveFailures: 0 }) },
+    daily: Object.entries(state.daily[key] ?? {}).sort(([left], [right]) => left.localeCompare(right))
+      .map(([date, bucket]) => ({ date, ...bucket, tokens: { ...bucket.tokens } })),
   }
 }
 
@@ -89,7 +99,12 @@ export function createUsageReport(
   now: Date,
   persistenceError?: string,
 ): UsageReport {
-  const routes = Object.entries(state.routes).map(([key, stats]) => routeReport(key, stats, config))
+  const routeKeys = new Set([
+    ...Object.keys(state.routes),
+    ...Object.keys(state.health),
+    ...config.models.map(model => routeKey(model.provider, model.model)),
+  ])
+  const routes = [...routeKeys].map(key => routeReport(key, state.routes[key] ?? emptyRouteStats(), state, config))
   routes.sort((left, right) => routeLabel(left.provider, left.model).localeCompare(routeLabel(right.provider, right.model)))
   const subscriptions = config.subscriptions.map(subscription => {
     const windowStart = currentWindowStart(subscription, now)
@@ -108,6 +123,8 @@ export function createUsageReport(
   })
   const totalCashPicoUsd = Object.values(state.routes).reduce((total, route) => total + BigInt(route.cashPicoUsd), 0n)
   const totalQuotaNanoUnits = Object.values(state.routes).reduce((total, route) => total + BigInt(route.quotaNanoUnits), 0n)
+  const healthSummary = { unknown: 0, healthy: 0, degraded: 0, unhealthy: 0 }
+  for (const route of routes) healthSummary[route.health.status] += 1
   return {
     routes,
     subscriptions,
@@ -115,6 +132,7 @@ export function createUsageReport(
       cashMicroUsd: (totalCashPicoUsd / PICO_USD_PER_MICRO_USD).toString(),
       quotaMilliUnits: (totalQuotaNanoUnits / NANO_QUOTA_PER_MILLI_UNIT).toString(),
     },
+    healthSummary,
     ...(persistenceError === undefined ? {} : { persistenceError }),
   }
 }
@@ -139,7 +157,7 @@ export function formatUsageReport(report: UsageReport): string {
   if (report.routes.length === 0) return 'No model requests have been measured yet.'
   const lines = ['Model usage (all time):']
   for (const route of report.routes) {
-    lines.push(`- ${routeLabel(route.provider, route.model)} [${route.billing}]`)
+    lines.push(`- ${routeLabel(route.provider, route.model)} [${route.billing}; ${route.health.status}]`)
     lines.push(`  requests ${route.requests}; completed ${route.completed}; failed ${route.failed}; aborted ${route.aborted}; truncated ${route.truncated}`)
     lines.push(`  tokens input ${route.tokens.input}; cache read ${route.tokens.cacheRead}; cache write ${route.tokens.cacheWrite}; output ${route.tokens.output}`)
     lines.push(`  cash ${money(route.cashMicroUsd)}; quota ${quota(route.quotaMilliUnits)}; average latency ${route.averageLatencyMs} ms`)
