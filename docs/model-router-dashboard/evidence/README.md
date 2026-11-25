@@ -11,7 +11,7 @@ Baseline revision: merged main `3cef52a`, without the model-router dashboard pac
 
 ## After
 
-Changed revision: dashboard implementation on the stacked branch based on mockup commit `36f79cb`; the exact final source SHA is the PR head. The isolated profile has the new client and Host package installed. Three fictional routes and bounded fictional v2 metrics provide a populated state; a local mock adapter performs validation without external model calls.
+Changed revision: dashboard repair candidate `dccec53` (stacked on mockup commit `36f79cb`). The isolated profile has the new client and Host package installed. Three fictional routes and bounded fictional v2 metrics provide a populated state; a local mock adapter performs validation without external model calls.
 
 - `after-1440.png`: populated dashboard at 1440×1000.
 - `after-390.png`: the same dashboard at 390×900.
