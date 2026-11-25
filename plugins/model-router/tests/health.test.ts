@@ -208,7 +208,7 @@ describe('dashboard history and route health', () => {
   })
 
   it('given_probe_longer_than_interval_when_timer_ticks_then_no_duplicate_is_started', async () => {
-    mock.timers.enable({ apis: ['setInterval'] })
+    mock.timers.enable({ apis: ['setInterval', 'Date'] })
     try {
       const configValue = config(true)
       const metrics = await store(configValue)
