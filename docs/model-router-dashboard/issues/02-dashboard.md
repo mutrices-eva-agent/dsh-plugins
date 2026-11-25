@@ -1,7 +1,7 @@
 # Ticket 02: DSH Web dashboard
 
 Status: ready
-Execution: blocked by ticket 01
+Execution: accepted
 Dependencies: 01
 Specification: `docs/model-router-dashboard/spec.md`
 Design baseline: `mockups/model-router-dashboard.html`, human-approved
@@ -20,5 +20,5 @@ Expose a read-only dashboard projection from the host plugin and add a DSH Web c
 - Approved layout is inspected at 1440px and 390px in DSH Web with before/after evidence.
 - Clean build/checks and final-head CI pass.
 
-Candidate: pending
-Review: pending
+Candidate: `dccec53`
+Review: PASS — independent Spec review confirmed all six defects repaired and exact-value/30-day evidence adequate; independent Standards review found no remaining correctness blocker. Actual DSH Web 0.2.2-rc.5 captures at 1440px/390px, pause/resume, empty/populated states and narrow vertical scrolling passed without console errors.

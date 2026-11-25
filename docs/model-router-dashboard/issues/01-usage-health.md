@@ -1,7 +1,7 @@
 # Ticket 01: Usage history and route health
 
 Status: ready
-Execution: building
+Execution: accepted
 Dependencies: none
 Specification: `docs/model-router-dashboard/spec.md`
 Design baseline: no UI in this ticket
@@ -21,5 +21,5 @@ Extend the existing host plugin with backward-compatible daily usage buckets, pa
 - Only structured failure codes are retained; credentials, prompts, responses, and raw provider messages are not.
 - BDD regressions cover each criterion and clean `npm run check` passes.
 
-Candidate: pending
-Review: pending
+Candidate: `dccec53`; regression-only follow-ups through `6470e48`
+Review: PASS — independent Standards and Spec reviews found all implementation blockers repaired at `dccec53`. The final overlap regression advances both the configured 60,000 ms interval and `Date.now()` at `6470e48`; Spec confirmed it would fail on the pre-repair implementation. Focused health tests 12/12 and strict typecheck pass. Full suite: 65 tests.
