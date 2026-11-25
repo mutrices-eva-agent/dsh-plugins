@@ -221,7 +221,7 @@ describe('dashboard history and route health', () => {
       })())
       probes.start()
       await new Promise(resolve => setImmediate(resolve))
-      mock.timers.tick(1000)
+      mock.timers.tick(60000)
       await new Promise(resolve => setImmediate(resolve))
       assert.equal(calls, 1)
       await probes.dispose()
