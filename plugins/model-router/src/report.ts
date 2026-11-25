@@ -21,11 +21,14 @@ export interface RouteReport {
   truncated: number
   tokens: RouteStats['tokens']
   cashMicroUsd: string
+  cashPicoUsd: string
   equivalentMicroUsd: string | null
   quotaMilliUnits: string
+  quotaNanoUnits: string
   averageLatencyMs: number
   outputTokensPerSecond: string | null
   cashMicroUsdPer1kOutputTokens: string | null
+  cashPicoUsdPer1kOutputTokens: string | null
   outputTokensPerQuotaUnit: string | null
   ratedSuccessBasisPoints: number | null
   ratedGood: number
@@ -40,14 +43,19 @@ export interface UsageReport {
     id: string
     windowStart: string
     quotaMilliUnits: string
+    quotaNanoUnits: string
     quotaLimitMilliUnits: string
+    quotaLimitNanoUnits: string
     remainingQuotaMilliUnits: string
+    remainingQuotaNanoUnits: string
     utilizationBasisPoints: number | null
     windowCostMicroUsd: string | null
   }[]
   totals: {
     cashMicroUsd: string
+    cashPicoUsd: string
     quotaMilliUnits: string
+    quotaNanoUnits: string
   }
   healthSummary: Record<RouteHealth['status'], number>
   persistenceError?: string
@@ -78,11 +86,14 @@ function routeReport(key: string, stats: RouteStats, state: MetricsState, config
     truncated: stats.truncated,
     tokens: { ...stats.tokens },
     cashMicroUsd: (cashPicoUsd / PICO_USD_PER_MICRO_USD).toString(),
+    cashPicoUsd: stats.cashPicoUsd,
     equivalentMicroUsd: stats.equivalentSamples > 0 ? equivalentMicroUsd.toString() : null,
     quotaMilliUnits: (quotaNanoUnits / NANO_QUOTA_PER_MILLI_UNIT).toString(),
+    quotaNanoUnits: stats.quotaNanoUnits,
     averageLatencyMs: stats.requests === 0 ? 0 : Number(latency / requests),
     outputTokensPerSecond: divide(output * 1000n, latency),
     cashMicroUsdPer1kOutputTokens: divide(cashPicoUsd * 1000n, output * PICO_USD_PER_MICRO_USD),
+    cashPicoUsdPer1kOutputTokens: divide(cashPicoUsd * 1000n, output),
     outputTokensPerQuotaUnit: divide(output * NANO_QUOTA_PER_UNIT, quotaNanoUnits),
     ratedSuccessBasisPoints: ratioBasisPoints(BigInt(stats.ratedGood), BigInt(stats.ratedGood + stats.ratedBad)),
     ratedGood: stats.ratedGood,
@@ -115,8 +126,11 @@ export function createUsageReport(
       id: subscription.id,
       windowStart,
       quotaMilliUnits: (used / NANO_QUOTA_PER_MILLI_UNIT).toString(),
+      quotaNanoUnits: used.toString(),
       quotaLimitMilliUnits: (limit / NANO_QUOTA_PER_MILLI_UNIT).toString(),
+      quotaLimitNanoUnits: limit.toString(),
       remainingQuotaMilliUnits: ((limit > used ? limit - used : 0n) / NANO_QUOTA_PER_MILLI_UNIT).toString(),
+      remainingQuotaNanoUnits: (limit > used ? limit - used : 0n).toString(),
       utilizationBasisPoints: ratioBasisPoints(used, limit),
       windowCostMicroUsd: subscription.windowCostMicroUsd?.toString() ?? null,
     }
@@ -130,7 +144,9 @@ export function createUsageReport(
     subscriptions,
     totals: {
       cashMicroUsd: (totalCashPicoUsd / PICO_USD_PER_MICRO_USD).toString(),
+      cashPicoUsd: totalCashPicoUsd.toString(),
       quotaMilliUnits: (totalQuotaNanoUnits / NANO_QUOTA_PER_MILLI_UNIT).toString(),
+      quotaNanoUnits: totalQuotaNanoUnits.toString(),
     },
     healthSummary,
     ...(persistenceError === undefined ? {} : { persistenceError }),

@@ -17,9 +17,9 @@ async function clientPlugin(rpcResult: { ok: boolean; value?: unknown; error?: {
     },
   }
   const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
-  const calls: { url: string; method: string; payload: unknown }[] = []
-  const fetch = async (url: string, options: { method: string; body: string }) => {
-    calls.push({ url, method: options.method, payload: options.body })
+  const calls: { url: string; method: string; payload: unknown; signal?: AbortSignal }[] = []
+  const fetch = async (url: string, options: { method: string; body: string; signal?: AbortSignal }) => {
+    calls.push({ url, method: options.method, payload: options.body, ...(options.signal === undefined ? {} : { signal: options.signal }) })
     return {
       ok: rpcResult.ok,
       async json() { return rpcResult.ok ? rpcResult.value : { error: rpcResult.error?.message } },
@@ -44,7 +44,7 @@ async function clientPlugin(rpcResult: { ok: boolean; value?: unknown; error?: {
     component: unknown
     injected?: {
       load: (signal: AbortSignal) => Promise<unknown>
-      setRouting: (enabled: boolean) => Promise<void>
+      setRouting: (enabled: boolean, signal?: AbortSignal) => Promise<void>
     }
   }[] = []
   const ctx = {
@@ -58,7 +58,7 @@ async function clientPlugin(rpcResult: { ok: boolean; value?: unknown; error?: {
         name: string
         key?: string
         id?: string
-        inject?: () => { load: (signal: AbortSignal) => Promise<unknown>; setRouting: (enabled: boolean) => Promise<void> }
+        inject?: () => { load: (signal: AbortSignal) => Promise<unknown>; setRouting: (enabled: boolean, signal?: AbortSignal) => Promise<void> }
       }, component: unknown) {
         slots.push({ slot: definition.name, definition, component, ...(definition.inject === undefined ? {} : { injected: definition.inject() }) })
         return () => undefined
@@ -84,7 +84,8 @@ describe('dashboard client bundle', () => {
     assert.ok(injected)
     const report = await injected.load(new AbortController().signal)
     assert.deepEqual(report, { routes: [] })
-    await injected.setRouting(false)
+    const mutation = new AbortController()
+    await injected.setRouting(false, mutation.signal)
     assert.equal(calls.length, 2)
     assert.equal(calls[0]?.url, '/api/model-router/report')
     assert.equal(calls[0]?.method, 'POST')
@@ -92,6 +93,7 @@ describe('dashboard client bundle', () => {
     assert.equal(calls[1]?.url, '/api/model-router/set-routing')
     assert.equal(calls[1]?.method, 'POST')
     assert.equal(JSON.parse(String(calls[1]?.payload)).enabled, false)
+    assert.equal(calls[1]?.signal, mutation.signal)
   })
 
   it('given_fetch_error_when_client_loads_then_surfaces_the_error', async () => {

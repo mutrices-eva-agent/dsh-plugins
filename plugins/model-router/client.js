@@ -29,17 +29,17 @@ window.__ModuleLoader__.load({
     `
 
     const sum = (values) => values.reduce((total, value) => total + BigInt(value || 0), 0n)
-    const money = (micro) => {
-      const value = BigInt(micro || 0)
-      const whole = value / 1000000n
-      const fraction = (value % 1000000n).toString().padStart(6, '0')
-      return `$${whole.toLocaleString()}.${fraction.slice(0, 4)}`
+    const moneyPico = (pico) => {
+      const value = BigInt(pico || 0)
+      const whole = value / 1000000000000n
+      const fraction = (value % 1000000000000n).toString().padStart(12, '0').replace(/0+$/u, '')
+      return `$${whole.toLocaleString()}.${fraction || '00'}`
     }
     const number = (value) => Number(value || 0).toLocaleString()
-    const quota = (milliUnits) => {
-      const value = BigInt(milliUnits || 0)
-      const whole = value / 1000n
-      const fraction = (value % 1000n).toString().padStart(3, '0').replace(/0+$/u, '')
+    const quotaNano = (nanoUnits) => {
+      const value = BigInt(nanoUnits || 0)
+      const whole = value / 1000000000n
+      const fraction = (value % 1000000000n).toString().padStart(9, '0').replace(/0+$/u, '')
       return fraction ? `${whole.toLocaleString()}.${fraction}` : whole.toLocaleString()
     }
     const percent = (basisPoints) => basisPoints === null || basisPoints === undefined ? 'n/a' : `${(basisPoints / 100).toFixed(1)}%`
@@ -82,7 +82,10 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState(null)
       const [loading, setLoading] = useState(true)
       const controller = useRef(null)
+      const mutationController = useRef(null)
+      const mounted = useRef(false)
       const refresh = useCallback(async () => {
+        if (!mounted.current) return
         controller.current?.abort()
         const next = new AbortController()
         controller.current = next
@@ -90,16 +93,21 @@ window.__ModuleLoader__.load({
         setError(null)
         try {
           const value = await load(next.signal)
-          if (!next.signal.aborted) setReport(value)
+          if (mounted.current && !next.signal.aborted) setReport(value)
         } catch (cause) {
-          if (!next.signal.aborted) setError(cause instanceof Error ? cause.message : 'Report unavailable')
+          if (mounted.current && !next.signal.aborted) setError(cause instanceof Error ? cause.message : 'Report unavailable')
         } finally {
-          if (!next.signal.aborted) setLoading(false)
+          if (mounted.current && !next.signal.aborted) setLoading(false)
         }
       }, [load])
       useEffect(() => {
+        mounted.current = true
         refresh()
-        return () => controller.current?.abort()
+        return () => {
+          mounted.current = false
+          controller.current?.abort()
+          mutationController.current?.abort()
+        }
       }, [refresh])
 
       if (loading && !report) return h('main', { className: 'mr-dashboard' }, h('style', null, styles), h('div', { className: 'mr-state' }, 'Loading model usage and route health…'))
@@ -108,19 +116,29 @@ window.__ModuleLoader__.load({
       if (!report) return null
 
       const requests = report.routes.reduce((total, route) => total + route.requests, 0)
-      const completed = report.routes.reduce((total, route) => total + route.completed, 0)
+      const generated = new Date(report.generatedAt)
+      const cutoff = new Date(Date.UTC(generated.getUTCFullYear(), generated.getUTCMonth(), generated.getUTCDate() - 29)).toISOString().slice(0, 10)
+      const recentBuckets = report.routes.flatMap(route => (route.daily || []).filter(bucket => bucket.date >= cutoff))
+      const recentRequests = recentBuckets.reduce((total, bucket) => total + bucket.requests, 0)
+      const recentCompleted = recentBuckets.reduce((total, bucket) => total + bucket.completed, 0)
+      const hasDailyHistory = report.routes.some(route => (route.daily || []).length > 0)
       const ratedGood = report.routes.reduce((total, route) => total + route.ratedGood, 0)
       const ratedBad = report.routes.reduce((total, route) => total + route.ratedBad, 0)
       const rated = ratedGood + ratedBad
-      const quotaUsed = sum(report.subscriptions.map(item => item.quotaMilliUnits))
-      const quotaLimit = sum(report.subscriptions.map(item => item.quotaLimitMilliUnits))
+      const quotaUsed = sum(report.subscriptions.map(item => item.quotaNanoUnits))
+      const quotaLimit = sum(report.subscriptions.map(item => item.quotaLimitNanoUnits))
       const quotaPercent = quotaLimit === 0n ? null : Number(quotaUsed * 1000n / quotaLimit) / 10
       const toggleRouting = async () => {
+        mutationController.current?.abort()
+        const next = new AbortController()
+        mutationController.current = next
         try {
-          await setRouting(!report.routingEnabled)
-          await refresh()
+          await setRouting(!report.routingEnabled, next.signal)
+          if (mounted.current && !next.signal.aborted) await refresh()
         } catch (cause) {
-          setError(cause instanceof Error ? cause.message : 'Routing update failed')
+          if (mounted.current && !next.signal.aborted) setError(cause instanceof Error ? cause.message : 'Routing update failed')
+        } finally {
+          if (mutationController.current === next) mutationController.current = null
         }
       }
 
@@ -133,8 +151,8 @@ window.__ModuleLoader__.load({
             h('button', { className: 'mr-button', onClick: refresh, disabled: loading }, loading ? 'Refreshing…' : 'Refresh'))),
         error ? h('div', { className: 'mr-error' }, error) : null,
         h('section', { className: 'mr-grid', 'aria-label': 'Usage summary' },
-          h('div', { className: 'mr-card' }, h('div', { className: 'mr-label' }, 'REQUESTS · ALL TIME'), h('div', { className: 'mr-value' }, requests.toLocaleString()), h('div', { className: 'mr-detail' }, `${requests ? (completed * 100 / requests).toFixed(1) : '0.0'}% completed`)),
-          h('div', { className: 'mr-card' }, h('div', { className: 'mr-label' }, 'CASH SPEND'), h('div', { className: 'mr-value' }, money(report.totals.cashMicroUsd)), h('div', { className: 'mr-detail' }, `${requests ? money((BigInt(report.totals.cashMicroUsd) / BigInt(requests)).toString()) : '$0.0000'} per request`)),
+          h('div', { className: 'mr-card' }, h('div', { className: 'mr-label' }, 'REQUESTS · 30 DAYS'), h('div', { className: 'mr-value' }, recentRequests.toLocaleString()), h('div', { className: 'mr-detail' }, hasDailyHistory ? `${recentRequests ? (recentCompleted * 100 / recentRequests).toFixed(1) : '0.0'}% completed` : 'History starts with new requests')),
+          h('div', { className: 'mr-card' }, h('div', { className: 'mr-label' }, 'CASH SPEND'), h('div', { className: 'mr-value' }, moneyPico(report.totals.cashPicoUsd)), h('div', { className: 'mr-detail' }, `${requests ? moneyPico((BigInt(report.totals.cashPicoUsd) / BigInt(requests)).toString()) : '$0.00'} per request`)),
           h('div', { className: 'mr-card' }, h('div', { className: 'mr-label' }, 'SUBSCRIPTION QUOTA'), h('div', { className: 'mr-value' }, quotaPercent === null ? 'n/a' : `${quotaPercent.toFixed(1)}%`), h('div', { className: 'mr-detail' }, quotaLimit === 0n ? 'No configured limit' : 'Current configured windows')),
           h('div', { className: 'mr-card' }, h('div', { className: 'mr-label' }, 'USER-RATED SUCCESS'), h('div', { className: 'mr-value' }, rated ? `${(ratedGood * 100 / rated).toFixed(1)}%` : 'n/a'), h('div', { className: 'mr-detail' }, rated ? `${ratedGood} of ${rated} rated requests` : 'No rated requests'))),
         h('section', { className: 'mr-layout' },
@@ -152,10 +170,10 @@ window.__ModuleLoader__.load({
             h('thead', null, h('tr', null, ['Route', 'Health', 'Requests', 'Avg latency', 'Cash / quota', 'Output efficiency', 'Rated success'].map(label => h('th', { key: label }, label)))),
             h('tbody', null, report.routes.map(route => {
               const label = `${route.provider}/${route.model}`
-              const cashOrQuota = route.billing === 'subscription' ? `${quota(route.quotaMilliUnits)} units` : money(route.cashMicroUsd)
+              const cashOrQuota = route.billing === 'subscription' ? `${quotaNano(route.quotaNanoUnits)} units` : moneyPico(route.cashPicoUsd)
               const efficiency = route.billing === 'subscription'
                 ? `${route.outputTokensPerQuotaUnit || 'n/a'} tok/unit`
-                : `${route.cashMicroUsdPer1kOutputTokens === null ? 'n/a' : money(route.cashMicroUsdPer1kOutputTokens)} / 1k tok`
+                : `${route.cashPicoUsdPer1kOutputTokens === null ? 'n/a' : moneyPico(route.cashPicoUsdPer1kOutputTokens)} / 1k tok`
               return h('tr', { key: label },
                 h('td', null, h('div', { className: 'mr-route' }, label), h('div', { className: 'mr-muted' }, `${route.billing}${route.health.lastProbeAt ? ' · probed' : ''}`)),
                 h('td', null, h('span', { className: `mr-badge ${route.health.status}`, title: route.health.lastFailureCode || undefined }, `● ${healthLabel(route.health.status)}`)),
@@ -186,9 +204,9 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error(value.error || 'Report unavailable')
           return value
         }
-        const setRouting = async enabled => {
+        const setRouting = async (enabled, signal) => {
           const response = await fetch('/api/model-router/set-routing', {
-            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled }),
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled }), signal,
           })
           const value = await response.json()
           if (!response.ok) throw new Error(value.error || 'Routing update failed')

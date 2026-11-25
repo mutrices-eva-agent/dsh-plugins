@@ -14,7 +14,7 @@ declare module '@deepseek-ai/dsh-llm/types' {
 function errorCode(error: unknown): string {
   if (typeof error === 'object' && error !== null && 'code' in error) {
     const code = error.code
-    if (typeof code === 'string') return code
+    if (typeof code === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/u.test(code)) return code
   }
   return 'UNKNOWN'
 }
@@ -55,6 +55,8 @@ export class HealthProbeRunner {
     for (const model of this.config.models) {
       if (!model.healthProbe) continue
       const key = routeKey(model.provider, model.model)
+      if (this.running.has(key)) continue
+      if (!this.metrics.isRoutable(model.provider, model.model, new Date(now))) continue
       if ((this.lastStarted.get(key) ?? -Infinity) + this.config.health.probeIntervalMs > now) continue
       this.lastStarted.set(key, now)
       const controller = new AbortController()

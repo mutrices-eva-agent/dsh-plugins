@@ -60,8 +60,9 @@ async function validateModels(
   ctx: Context,
   config: Config,
   onUnavailable: (model: ModelConfig, code: string) => Promise<void>,
-): Promise<ModelConfig[]> {
+): Promise<{ available: ModelConfig[]; unavailable: ModelConfig[] }> {
   const available: ModelConfig[] = []
+  const unavailable: ModelConfig[] = []
   for (const model of config.models) {
     const reasoningEfforts: ModelConfig['reasoningEfforts'] = []
     let unavailableCode = 'UNKNOWN'
@@ -74,26 +75,31 @@ async function validateModels(
         })
         reasoningEfforts.push(effort)
       } catch (error: unknown) {
-        const code = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+        const observedCode = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
           ? error.code
-          : 'UNKNOWN'
+          : undefined
+        const code = observedCode !== undefined && /^[A-Za-z0-9_.:-]{1,64}$/u.test(observedCode) ? observedCode : 'UNKNOWN'
         unavailableCode = code
-        ctx.logger.warn(`model-router: excluding ${routeLabel(model.provider, model.model)} at ${effort}: %o`, error)
+        ctx.logger.warn(`model-router: excluding ${routeLabel(model.provider, model.model)} at ${effort}; validation ${code}`)
       }
     }
     if (reasoningEfforts.length > 0) available.push({ ...model, reasoningEfforts })
-    else await onUnavailable(model, unavailableCode)
+    else {
+      unavailable.push(model)
+      await onUnavailable(model, unavailableCode)
+    }
   }
-  return available
+  return { available, unavailable }
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const metrics = await MetricsStore.load(resolve(ctx.profileContext.dir, config.stateFile), config)
-  const availableModels = await validateModels(ctx, config, async (model, code) => {
+  const { available: availableModels, unavailable: unavailableModels } = await validateModels(ctx, config, async (model, code) => {
     await metrics.markUnavailable(model.provider, model.model, code, new Date())
   })
-  const routingConfig: Config = { ...config, models: availableModels }
-  new HealthProbeRunner(ctx, { ...config, models: availableModels }, metrics).start()
+  const candidateModels = [...availableModels, ...unavailableModels]
+  const routingConfig: Config = { ...config, models: candidateModels }
+  new HealthProbeRunner(ctx, { ...config, models: candidateModels }, metrics).start()
   const automatic = new Map<string, boolean>()
   const lastDecisions = new Map<string, RouteDecision>()
   const lastObservedRoutes = new Map<string, ObservedRoute>()
@@ -103,7 +109,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const choose = (input: TaskInput): RouteDecision | undefined => {
     const now = new Date()
     const assessment = assessTask(routingConfig, input)
-    const models = availableModels.filter(model => metrics.isRoutable(model.provider, model.model, now))
+    const models = candidateModels.filter(model => metrics.isRoutable(model.provider, model.model, now))
     return selectRoute({ ...routingConfig, models }, assessment, metrics.quotaBySubscription(now))
   }
 
@@ -180,6 +186,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     } finally {
       const observed = { provider: options.provider, model: options.model }
       if (activeSessions.has(sessionId)) lastObservedRoutes.set(sessionId, observed)
+      if (options.signal?.aborted && outcome === 'failed') outcome = 'aborted'
       try {
         await metrics.record({
           ...observed,

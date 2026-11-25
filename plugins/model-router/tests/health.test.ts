@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -7,7 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Config } from '../src/config.js'
 import { HealthProbeRunner } from '../src/health.js'
-import { MetricsStore } from '../src/metrics.js'
+import { emptyRouteStats, MetricsStore } from '../src/metrics.js'
 import { createUsageReport } from '../src/report.js'
 
 const now = new Date('2026-11-25T12:00:00.000Z')
@@ -71,11 +71,20 @@ describe('dashboard history and route health', () => {
   it('given_a_legacy_v2_file_without_history_when_loaded_then_defaults_preserve_existing_data', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'model-router-legacy-'))
     const path = join(directory, 'metrics.json')
-    await writeFile(path, JSON.stringify({ version: 2, routes: {}, subscriptionWindows: {} }))
+    const legacy = emptyRouteStats()
+    legacy.requests = 7
+    legacy.completed = 6
+    legacy.failed = 1
+    legacy.tokens.output = '123'
+    legacy.cashPicoUsd = '456'
+    await writeFile(path, JSON.stringify({ version: 2, routes: { 'paid\0pro': legacy }, subscriptionWindows: {} }))
     const metrics = await MetricsStore.load(path, config())
     assert.deepEqual(metrics.snapshot().daily, {})
     assert.deepEqual(metrics.snapshot().health, {})
     assert.equal(metrics.snapshot().version, 2)
+    assert.equal(metrics.snapshot().routes['paid\0pro']?.requests, 7)
+    assert.equal(metrics.snapshot().routes['paid\0pro']?.tokens.output, '123')
+    assert.equal(metrics.snapshot().routes['paid\0pro']?.cashPicoUsd, '456')
   })
 
   it('given_daily_requests_beyond_retention_when_recorded_then_buckets_are_bounded_and_exact', async () => {
@@ -151,6 +160,35 @@ describe('dashboard history and route health', () => {
     assert.ok(metrics.snapshot().health['paid\0pro']?.lastProbeAt)
   })
 
+  it('given_enabled_subscription_probe_when_settled_then_request_and_token_quota_are_recorded', async () => {
+    const configValue = config(true)
+    const model = configValue.models[0]
+    assert.ok(model)
+    model.billing = {
+      kind: 'subscription', subscription: 'plan',
+      quota: {
+        requestMilliUnits: 100,
+        inputMilliUnitsPerMillionTokens: 100,
+        cacheReadMilliUnitsPerMillionTokens: 10,
+        cacheWriteMilliUnitsPerMillionTokens: 20,
+        outputMilliUnitsPerMillionTokens: 1000,
+      },
+    }
+    configValue.subscriptions.push({
+      id: 'plan', windowHours: 5, windowAnchor: '2026-01-01T00:00:00.000Z', quotaLimitMilliUnits: 10000,
+    })
+    const metrics = await store(configValue)
+    const probes = probeRunner(metrics, configValue, async function* () {
+      yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 10 } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })
+    probes.start()
+    await probes.runner.whenIdle()
+    await probes.dispose()
+    assert.equal(metrics.snapshot().routes['paid\0pro']?.quotaNanoUnits, '100020000')
+    assert.equal(Object.values(metrics.snapshot().subscriptionWindows.plan ?? {})[0]?.quotaNanoUnits, '100020000')
+  })
+
   it('given_failed_probe_with_raw_message_when_recorded_then_only_failure_code_is_retained', async () => {
     const configValue = config(true)
     configValue.health.failureThreshold = 1
@@ -167,6 +205,30 @@ describe('dashboard history and route health', () => {
     assert.equal(metrics.snapshot().health['paid\0pro']?.status, 'unhealthy')
     assert.equal(metrics.snapshot().health['paid\0pro']?.lastFailureCode, 'RATE_LIMIT')
     assert.doesNotMatch(JSON.stringify(metrics.snapshot()), /secret provider detail/u)
+  })
+
+  it('given_probe_longer_than_interval_when_timer_ticks_then_no_duplicate_is_started', async () => {
+    mock.timers.enable({ apis: ['setInterval'] })
+    try {
+      const configValue = config(true)
+      const metrics = await store(configValue)
+      let calls = 0
+      const probes = probeRunner(metrics, configValue, (options: GenerateOptions) => (async function* () {
+        calls += 1
+        yield { type: 'usage', usage: { inputTokens: 0, outputTokens: 0 } }
+        await new Promise<void>(resolve => options.signal?.addEventListener('abort', () => resolve(), { once: true }))
+        yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'cancelled' } } }
+      })())
+      probes.start()
+      await new Promise(resolve => setImmediate(resolve))
+      mock.timers.tick(1000)
+      await new Promise(resolve => setImmediate(resolve))
+      assert.equal(calls, 1)
+      await probes.dispose()
+      assert.equal(calls, 1)
+    } finally {
+      mock.timers.reset()
+    }
   })
 
   it('given_probe_timeout_when_settled_then_it_degrades_health_as_a_failure', async () => {
