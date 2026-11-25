@@ -1,0 +1,29 @@
+name: autopilot
+
+on:
+  pull_request:
+    paths:
+      - 'AGENTS.md'
+      - '.agents/skills/autopilot/**'
+      - 'docs/agents/build-first-version.md'
+      - 'tests/workflow/build-first-version/**'
+      - '.github/workflows/autopilot.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'AGENTS.md'
+      - '.agents/skills/autopilot/**'
+      - 'docs/agents/build-first-version.md'
+      - 'tests/workflow/build-first-version/**'
+      - '.github/workflows/autopilot.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - name: Verify autopilot workflow
+        run: node tests/workflow/build-first-version/verify.mjs
