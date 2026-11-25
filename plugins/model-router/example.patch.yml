@@ -1,0 +1,43 @@
+# Copy the entry into the active profile's cordis.patch.yml and replace the
+# illustrative quota values with the plan's actual accounting rules.
+- id: model-router
+  config:
+    strategy: balanced
+    subscriptions:
+      - id: kimi-plan
+        windowHours: 720
+        windowAnchor: '2026-01-01T00:00:00.000Z'
+        quotaLimitMilliUnits: 100000
+    models:
+      - provider: kimi-coding
+        model: k3.1-pro
+        capability: 5
+        speed: 3
+        input: [text, image]
+        reasoningEfforts: [off, low, high, max]
+        contextWindow: 1048576
+        billing:
+          kind: subscription
+          subscription: kimi-plan
+          quota:
+            requestMilliUnits: 1000
+            inputMilliUnitsPerMillionTokens: 0
+            cacheReadMilliUnitsPerMillionTokens: 0
+            cacheWriteMilliUnitsPerMillionTokens: 0
+            outputMilliUnitsPerMillionTokens: 2000
+
+# A pay-as-you-go model uses this billing form. All prices are integer
+# micro-USD per one million tokens; replace every example value.
+#      - provider: openrouter
+#        model: provider/exact-model
+#        capability: 5
+#        speed: 4
+#        input: [text, image]
+#        reasoningEfforts: [off, low, medium, high, max]
+#        billing:
+#          kind: pay-as-you-go
+#          prices:
+#            inputMicroUsdPerMillionTokens: 3000
+#            cacheReadMicroUsdPerMillionTokens: 300
+#            cacheWriteMicroUsdPerMillionTokens: 3750
+#            outputMicroUsdPerMillionTokens: 15000
