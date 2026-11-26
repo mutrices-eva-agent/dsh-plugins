@@ -162,10 +162,14 @@ describe('metrics', () => {
     }
     const report = createUsageReport(state, config, now)
     assert.equal(report.routes.find(route => route.provider === 'paid')?.cashMicroUsd, '1')
+    assert.equal(report.routes.find(route => route.provider === 'paid')?.cashPicoUsd, '1000000')
     assert.equal(report.routes.find(route => route.provider === 'sub')?.quotaMilliUnits, '1')
+    assert.equal(report.routes.find(route => route.provider === 'sub')?.quotaNanoUnits, '1000000')
     assert.equal(report.routes.find(route => route.provider === 'sub')?.equivalentMicroUsd, '100')
     assert.equal(report.totals.cashMicroUsd, '1')
+    assert.equal(report.totals.cashPicoUsd, '1000000')
     assert.equal(report.totals.quotaMilliUnits, '1')
+    assert.equal(report.totals.quotaNanoUnits, '1000000')
   })
 
   it('given_a_local_failure_without_usage_when_recorded_then_no_subscription_quota_is_burned', () => {

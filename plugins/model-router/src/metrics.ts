@@ -43,9 +43,34 @@ const routeStatsSchema = z.object({
   ratedBad: z.number().int().nonnegative(),
 }).strict()
 
+const dailyBucketSchema = z.object({
+  requests: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  aborted: z.number().int().nonnegative(),
+  truncated: z.number().int().nonnegative(),
+  tokens: tokenTotalsSchema,
+  cashPicoUsd: nonNegativeIntegerString,
+  quotaNanoUnits: nonNegativeIntegerString,
+  latencyMs: nonNegativeIntegerString,
+}).strict()
+
+const healthStateSchema = z.object({
+  status: z.enum(['unknown', 'healthy', 'degraded', 'unhealthy']),
+  consecutiveFailures: z.number().int().nonnegative(),
+  lastOutcome: z.enum(['completed', 'failed', 'aborted', 'truncated']).optional(),
+  lastLatencyMs: z.number().int().nonnegative().optional(),
+  lastSeenAt: z.string().optional(),
+  lastProbeAt: z.string().optional(),
+  lastFailureAt: z.string().optional(),
+  lastFailureCode: z.string().max(64).optional(),
+}).strict()
+
 export const metricsStateSchema = z.object({
   version: z.literal(2),
   routes: z.record(z.string(), routeStatsSchema),
+  daily: z.record(z.string(), z.record(z.string(), dailyBucketSchema)).default({}),
+  health: z.record(z.string(), healthStateSchema).default({}),
   subscriptionWindows: z.record(z.string(), z.record(z.string(), z.object({
     quotaNanoUnits: nonNegativeIntegerString,
   }).strict())),
@@ -53,6 +78,8 @@ export const metricsStateSchema = z.object({
 
 export type MetricsState = z.infer<typeof metricsStateSchema>
 export type RouteStats = MetricsState['routes'][string]
+export type DailyBucket = MetricsState['daily'][string][string]
+export type RouteHealth = MetricsState['health'][string]
 export type RequestOutcome = 'completed' | 'failed' | 'aborted' | 'truncated'
 
 export interface RequestMeasurement {
@@ -63,11 +90,14 @@ export interface RequestMeasurement {
   outcome: RequestOutcome
   now: Date
   subscriptionWindowStart?: string
+  probe?: boolean
+  failureCode?: string
 }
 
 type PendingOperation =
   | { type: 'record'; measurement: RequestMeasurement }
   | { type: 'rate'; provider: string; model: string; good: boolean }
+  | { type: 'unavailable'; provider: string; model: string; failureCode: string; now: Date }
 
 interface Reservation {
   sessionId: string
@@ -80,10 +110,10 @@ interface Reservation {
 }
 
 export function emptyMetricsState(): MetricsState {
-  return { version: 2, routes: {}, subscriptionWindows: {} }
+  return { version: 2, routes: {}, daily: {}, health: {}, subscriptionWindows: {} }
 }
 
-function emptyRouteStats(): RouteStats {
+export function emptyRouteStats(): RouteStats {
   return {
     requests: 0,
     completed: 0,
@@ -99,6 +129,70 @@ function emptyRouteStats(): RouteStats {
     latencyMs: '0',
     ratedGood: 0,
     ratedBad: 0,
+  }
+}
+
+function emptyDailyBucket(): DailyBucket {
+  return {
+    requests: 0,
+    completed: 0,
+    failed: 0,
+    aborted: 0,
+    truncated: 0,
+    tokens: { input: '0', cacheRead: '0', cacheWrite: '0', output: '0', reasoning: '0' },
+    cashPicoUsd: '0',
+    quotaNanoUnits: '0',
+    latencyMs: '0',
+  }
+}
+
+function applyDailyBase(
+  state: MetricsState,
+  config: Config,
+  key: string,
+  measurement: RequestMeasurement,
+  usage: TokenUsage,
+): DailyBucket {
+  const date = measurement.now.toISOString().slice(0, 10)
+  const routeDaily = state.daily[key] ?? {}
+  state.daily[key] = routeDaily
+  const bucket = routeDaily[date] ?? emptyDailyBucket()
+  routeDaily[date] = bucket
+  bucket.requests = increment(bucket.requests)
+  bucket[measurement.outcome] = increment(bucket[measurement.outcome])
+  bucket.latencyMs = addBigInt(bucket.latencyMs, BigInt(measurement.latencyMs))
+  bucket.tokens.input = addBigInt(bucket.tokens.input, BigInt(usage.inputTokens))
+  bucket.tokens.cacheRead = addBigInt(bucket.tokens.cacheRead, BigInt(usage.cacheReadTokens ?? 0))
+  bucket.tokens.cacheWrite = addBigInt(bucket.tokens.cacheWrite, BigInt(usage.cacheWriteTokens ?? 0))
+  bucket.tokens.output = addBigInt(bucket.tokens.output, BigInt(usage.outputTokens))
+  bucket.tokens.reasoning = addBigInt(bucket.tokens.reasoning, BigInt(usage.reasoningTokens ?? 0))
+  const dates = Object.keys(routeDaily).sort()
+  for (const expired of dates.slice(0, Math.max(0, dates.length - config.dailyRetentionDays))) delete routeDaily[expired]
+  return bucket
+}
+
+function failureCode(value: string | undefined): string {
+  return value !== undefined && /^[A-Za-z0-9_.:-]{1,64}$/u.test(value) ? value : 'UNKNOWN'
+}
+
+function applyRequestHealth(state: MetricsState, config: Config, key: string, measurement: RequestMeasurement): void {
+  const health = state.health[key] ?? { status: 'unknown', consecutiveFailures: 0 } satisfies RouteHealth
+  state.health[key] = health
+  const seenAt = measurement.now.toISOString()
+  health.lastSeenAt = seenAt
+  health.lastOutcome = measurement.outcome
+  health.lastLatencyMs = measurement.latencyMs
+  if (measurement.probe === true) health.lastProbeAt = seenAt
+  if (measurement.outcome === 'failed') {
+    health.consecutiveFailures = increment(health.consecutiveFailures)
+    health.lastFailureAt = seenAt
+    health.lastFailureCode = failureCode(measurement.failureCode)
+    health.status = health.consecutiveFailures >= config.health.failureThreshold ? 'unhealthy' : 'degraded'
+  } else if (measurement.outcome === 'completed' || measurement.outcome === 'truncated') {
+    health.consecutiveFailures = 0
+    delete health.lastFailureAt
+    delete health.lastFailureCode
+    health.status = measurement.latencyMs >= config.health.degradedLatencyMs ? 'degraded' : 'healthy'
   }
 }
 
@@ -174,17 +268,21 @@ export function applyMeasurement(state: MetricsState, config: Config, measuremen
   stats.tokens.cacheWrite = addBigInt(stats.tokens.cacheWrite, BigInt(usage.cacheWriteTokens ?? 0))
   stats.tokens.output = addBigInt(stats.tokens.output, BigInt(usage.outputTokens))
   stats.tokens.reasoning = addBigInt(stats.tokens.reasoning, BigInt(usage.reasoningTokens ?? 0))
+  const daily = applyDailyBase(state, config, key, measurement, usage)
+  applyRequestHealth(state, config, key, measurement)
   const model = config.models.find(item => item.provider === measurement.provider && item.model === measurement.model)
   if (model === undefined) return
   const billing = model.billing
   if (billing.kind === 'pay-as-you-go') {
     const cash = priceUsagePicoUsd(billing.prices, usage)
     stats.cashPicoUsd = addBigInt(stats.cashPicoUsd, cash)
+    daily.cashPicoUsd = addBigInt(daily.cashPicoUsd, cash)
     addEquivalent(stats, cash, 1n)
     return
   }
   const quota = measurement.usage === undefined ? 0n : quotaUsageNanoUnits(billing.quota, usage)
   stats.quotaNanoUnits = addBigInt(stats.quotaNanoUnits, quota)
+  daily.quotaNanoUnits = addBigInt(daily.quotaNanoUnits, quota)
   const equivalent = equivalentCost(model, config, quota)
   if (equivalent !== undefined) addEquivalent(stats, equivalent.numerator, equivalent.denominator)
   const subscription = config.subscriptions.find(item => item.id === billing.subscription)
@@ -201,6 +299,19 @@ export function applyMeasurement(state: MetricsState, config: Config, measuremen
 function applyOperation(state: MetricsState, config: Config, operation: PendingOperation): void {
   if (operation.type === 'record') {
     applyMeasurement(state, config, operation.measurement)
+    return
+  }
+  if (operation.type === 'unavailable') {
+    const key = routeKey(operation.provider, operation.model)
+    const seenAt = operation.now.toISOString()
+    state.health[key] = {
+      status: 'unhealthy',
+      consecutiveFailures: config.health.failureThreshold,
+      lastOutcome: 'failed',
+      lastSeenAt: seenAt,
+      lastFailureAt: seenAt,
+      lastFailureCode: failureCode(operation.failureCode),
+    }
     return
   }
   const stats = state.routes[routeKey(operation.provider, operation.model)]
@@ -259,6 +370,23 @@ export class MetricsStore {
       result.set(subscription.id, used)
     }
     return result
+  }
+
+  isRoutable(provider: string, model: string, now: Date): boolean {
+    this.refresh()
+    const health = this.state.health[routeKey(provider, model)]
+    if (health?.status !== 'unhealthy') return true
+    const failedAt = health.lastFailureAt ?? health.lastSeenAt
+    if (failedAt === undefined) return false
+    return now.getTime() - Date.parse(failedAt) >= this.config.health.retryAfterMs
+  }
+
+  async markUnavailable(provider: string, model: string, code: string, now: Date): Promise<void> {
+    const operation = { type: 'unavailable', provider, model, failureCode: failureCode(code), now } satisfies PendingOperation
+    this.refresh()
+    applyOperation(this.state, this.config, operation)
+    this.pending.push(operation)
+    await this.persist()
   }
 
   reserve(sessionId: string, decision: RouteDecision, now: Date): string | undefined {

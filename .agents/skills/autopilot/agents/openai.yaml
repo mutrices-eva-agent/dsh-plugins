@@ -1,0 +1,6 @@
+interface:
+  display_name: "Autopilot"
+  short_description: "Deliver a reviewed first version with minimal conversation"
+  default_prompt: "Use $autopilot to deliver this request through a reviewed draft PR and passing CI, then explain the business context, changes, risks, and adjustment options with diagrams."
+policy:
+  allow_implicit_invocation: false

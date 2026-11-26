@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model router dashboard mockup</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0d1117; color: #e6edf3; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px; }
+    header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 24px; }
+    h1 { margin: 0 0 5px; font-size: 24px; font-weight: 650; }
+    h2 { margin: 0 0 16px; font-size: 15px; font-weight: 650; }
+    p { margin: 0; color: #8b949e; }
+    button { border: 1px solid #30363d; background: #21262d; color: #e6edf3; border-radius: 6px; padding: 7px 12px; }
+    .actions { display: flex; gap: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .card, .panel { background: #161b22; border: 1px solid #30363d; border-radius: 10px; }
+    .card { padding: 16px; }
+    .label { color: #8b949e; font-size: 12px; margin-bottom: 7px; }
+    .value { font-size: 25px; font-weight: 650; letter-spacing: -.02em; }
+    .detail { color: #8b949e; font-size: 12px; margin-top: 4px; }
+    .layout { display: grid; grid-template-columns: 1.65fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .panel { padding: 18px; }
+    .legend { display: flex; gap: 14px; color: #8b949e; font-size: 12px; margin-bottom: 18px; }
+    .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: #58a6ff; }
+    .dot.purple { background: #bc8cff; }
+    .chart { height: 190px; display: flex; align-items: flex-end; gap: 12px; border-bottom: 1px solid #30363d; padding: 10px 4px 0; }
+    .bar-group { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 4px; position: relative; }
+    .bar { width: 16px; border-radius: 3px 3px 0 0; background: #58a6ff; }
+    .bar.quota { background: #bc8cff; }
+    .bar-label { position: absolute; bottom: -24px; color: #8b949e; font-size: 11px; }
+    .health-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+    .health-count { border: 1px solid #30363d; border-radius: 7px; padding: 10px; text-align: center; }
+    .health-count strong { display: block; font-size: 20px; }
+    .green { color: #3fb950; } .yellow { color: #d29922; } .red { color: #f85149; }
+    .probe { border-top: 1px solid #30363d; padding-top: 14px; margin-top: 16px; }
+    .probe strong { display: block; margin-bottom: 3px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; text-align: left; padding: 0 10px 10px; }
+    td { padding: 13px 10px; border-top: 1px solid #21262d; white-space: nowrap; }
+    td:first-child { white-space: normal; min-width: 200px; }
+    .route { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .muted { color: #8b949e; font-size: 12px; }
+    .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 8px; font-size: 11px; background: #21262d; }
+    .badge.healthy { color: #3fb950; background: #3fb95018; }
+    .badge.degraded { color: #d29922; background: #d2992218; }
+    .badge.unhealthy { color: #f85149; background: #f8514918; }
+    .badge.idle { color: #8b949e; }
+    .footer { margin-top: 14px; color: #8b949e; font-size: 12px; }
+    @media (max-width: 850px) { .grid { grid-template-columns: repeat(2, 1fr); } .layout { grid-template-columns: 1fr; } .table-wrap { overflow-x: auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Model router</h1>
+        <p>Usage efficiency and model route health · balanced strategy · automatic routing on</p>
+      </div>
+      <div class="actions"><button>Pause routing</button><button>Refresh</button></div>
+    </header>
+
+    <section class="grid" aria-label="Usage summary">
+      <div class="card"><div class="label">REQUESTS · 30 DAYS</div><div class="value">1,284</div><div class="detail">94.2% completed</div></div>
+      <div class="card"><div class="label">CASH SPEND</div><div class="value">$12.84</div><div class="detail">$0.0100 per request</div></div>
+      <div class="card"><div class="label">SUBSCRIPTION QUOTA</div><div class="value">62.4%</div><div class="detail">37.6% remains this window</div></div>
+      <div class="card"><div class="label">USER-RATED SUCCESS</div><div class="value">91.8%</div><div class="detail">342 of 378 rated requests</div></div>
+    </section>
+
+    <section class="layout">
+      <div class="panel">
+        <h2>Usage and estimated value</h2>
+        <div class="legend"><span><i class="dot"></i>Pay-as-you-go tokens</span><span><i class="dot purple"></i>Subscription tokens</span></div>
+        <div class="chart" aria-label="Seven day token usage chart">
+          <div class="bar-group"><i class="bar" style="height:42%"></i><i class="bar quota" style="height:68%"></i><span class="bar-label">Mon</span></div>
+          <div class="bar-group"><i class="bar" style="height:56%"></i><i class="bar quota" style="height:72%"></i><span class="bar-label">Tue</span></div>
+          <div class="bar-group"><i class="bar" style="height:35%"></i><i class="bar quota" style="height:84%"></i><span class="bar-label">Wed</span></div>
+          <div class="bar-group"><i class="bar" style="height:64%"></i><i class="bar quota" style="height:76%"></i><span class="bar-label">Thu</span></div>
+          <div class="bar-group"><i class="bar" style="height:48%"></i><i class="bar quota" style="height:90%"></i><span class="bar-label">Fri</span></div>
+          <div class="bar-group"><i class="bar" style="height:29%"></i><i class="bar quota" style="height:58%"></i><span class="bar-label">Sat</span></div>
+          <div class="bar-group"><i class="bar" style="height:52%"></i><i class="bar quota" style="height:79%"></i><span class="bar-label">Sun</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Route health</h2>
+        <div class="health-summary">
+          <div class="health-count"><strong class="green">5</strong><span class="muted">Healthy</span></div>
+          <div class="health-count"><strong class="yellow">1</strong><span class="muted">Degraded</span></div>
+          <div class="health-count"><strong class="red">1</strong><span class="muted">Unavailable</span></div>
+        </div>
+        <p>Health combines validation, recent request outcomes, latency, and optional probe results. Unhealthy routes are skipped after repeated failures.</p>
+        <div class="probe"><strong>Active probes: off</strong><p>No extra model requests or spend. Enable per route in settings.</p></div>
+      </div>
+    </section>
+
+    <section class="panel table-wrap">
+      <h2>Models</h2>
+      <table>
+        <thead><tr><th>Route</th><th>Health</th><th>Requests</th><th>Avg latency</th><th>Cash / quota</th><th>Output efficiency</th><th>Rated success</th></tr></thead>
+        <tbody>
+          <tr><td><div class="route">kimi-coding/k3.1-pro</div><div class="muted">Subscription · high effort</div></td><td><span class="badge healthy">● Healthy</span></td><td>842</td><td>1.8 s</td><td>412.6 units</td><td>184 tok/unit</td><td>93.1%</td></tr>
+          <tr><td><div class="route">openrouter/example-pro</div><div class="muted">Pay-as-you-go · high effort</div></td><td><span class="badge degraded">● Degraded</span></td><td>301</td><td>4.7 s</td><td>$10.62</td><td>1,482 tok/$</td><td>90.4%</td></tr>
+          <tr><td><div class="route">opencode-go/kimi-for-coding</div><div class="muted">Subscription · low effort</div></td><td><span class="badge healthy">● Healthy</span></td><td>116</td><td>1.2 s</td><td>38.1 units</td><td>221 tok/unit</td><td>92.5%</td></tr>
+          <tr><td><div class="route">openrouter/example-fast</div><div class="muted">Pay-as-you-go · low effort</div></td><td><span class="badge unhealthy">● Unavailable</span></td><td>25</td><td>—</td><td>$2.22</td><td>890 tok/$</td><td>84.0%</td></tr>
+        </tbody>
+      </table>
+      <div class="footer">Last refreshed 12 seconds ago · Health failures never expose credentials or request content.</div>
+    </section>
+  </main>
+</body>
+</html>

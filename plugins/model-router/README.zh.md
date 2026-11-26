@@ -37,6 +37,10 @@ dsh plugin --profile superagent add "$PWD"
 
 默认权重为质量 35、速度 20、现金 25、配额 20。均衡成本使用按量付费预估值；已知订阅窗口费用和配额上限时，也使用分摊订阅价值。可按所需权衡调整权重。
 
+## 仪表盘
+
+Web 客户端会在 DSH 左侧栏添加 **Model routes**。仪表盘显示实际请求总量、结果、近期每日输出用量、精确现金与当前窗口配额、路由效率、用户评价成功率和健康状态。刷新只读取仅限所有者的已认证主机端点，不发送模型请求。**Pause routing** 暂停自动模型选择，但不停止计量或健康监控。支持加载、空数据、错误、窄屏和正常数据状态。
+
 ## 命令
 
 - `/model-route` 或 `/model-route status`：自动状态、当前模型与上次任务决策。
@@ -62,6 +66,14 @@ dsh plugin --profile superagent add "$PWD"
 - 传输完成状态与用户评价成功率。
 
 测量数据默认保存到当前 DSH 配置下的 `.model-router/metrics-v2.json`，采用带版本校验的 JSON。DSH 的加锁原子写入工具串行化写入者，并把待写测量重放到最新磁盘状态，避免一个进程覆盖另一个进程已记录的用量。`lockWaitMs` 限制写入锁等待时间。已有文件损坏时插件停止加载，不覆盖原文件。后续写入失败会记录日志，并显示在报告中。
+
+## 健康检查
+
+被动健康监控始终使用启动验证与真实请求结果。失败请求使路由降级；`health.failureThreshold` 次连续失败使路由不可选择，直到 `health.retryAfterMs` 冷却结束。完成请求会恢复健康，除非延迟达到 `health.degradedLatencyMs`。用户取消不算提供商故障。只保留结构化故障代码，不保留原始提供商消息、提示、响应或凭据。
+
+主动探测默认关闭。对单个模型设置 `healthProbe: true` 后，按 `health.probeIntervalMs` 执行有界单 token 探测，并受 `health.probeTimeoutMs` 与 `health.probeMaxOutputTokens` 限制。探测不会重叠，销毁时中止，其用量计入请求、现金和配额。启用可能产生费用或消耗订阅配额。仪表盘刷新本身不会探测。
+
+`dailyRetentionDays` 限制 UTC 每日用量桶。旧 v2 文件以空的每日和健康部分加载，已有总量保持不变。
 
 ## 限制
 
