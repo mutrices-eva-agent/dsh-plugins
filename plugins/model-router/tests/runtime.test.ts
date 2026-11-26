@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
@@ -11,25 +11,30 @@ import { markAgentLoopRequest, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { apply, Config, MetricsStore } from '../src/index.js'
 
 type Listener = (...args: never[]) => void | AsyncIterable<StreamChunk>
+type FetchRouteHandler = (request: Request) => Promise<Response>
 
-async function fixture() {
+async function fixture(unsupportedEffort?: string, retryAfterMs = 60000) {
   const directory = await mkdtemp(join(tmpdir(), 'model-router-runtime-'))
   const listeners = new Map<string, Listener>()
+  const rpcHandlers = new Map<string, FetchRouteHandler>()
+  const warnings: string[] = []
   let commandHandler: CommandDefinition['handler'] | undefined
   const ctx = Object.assign(new Context(), {
     profileContext: { dir: directory },
     llm: {
-      async prepareCall(selection: { provider: string }) {
-        if (selection.provider === 'unavailable') throw new Error('no adapter')
+      async prepareCall(selection: { provider: string; reasoningEffort?: string }) {
+        if (selection.provider === 'unavailable' || selection.reasoningEffort === unsupportedEffort) throw new Error('secret provider detail')
         return {}
       },
     },
-    logger: { info() {}, warn() {} },
+    logger: { info() {}, warn(...args: unknown[]) { warnings.push(args.map(String).join(' ')) } },
     on(event: string, listener: Listener) {
       listeners.set(event, listener)
       return () => listeners.delete(event)
     },
-    inject(_services: string[], callback: (context: Context) => void) { callback(commandContext) },
+    inject(services: string[], callback: (context: Context) => void) {
+      callback(services.includes('connection') ? rpcContext : commandContext)
+    },
   })
   const commandContext = Object.assign(new Context(), {
     commands: {
@@ -40,9 +45,20 @@ async function fixture() {
     },
     effect(callback: () => () => void) { return callback() },
   })
+  const rpcContext = Object.assign(new Context(), {
+    connection: {
+      fetch: {
+        register(route: { path: string; fetch: FetchRouteHandler }) {
+          rpcHandlers.set(route.path, route.fetch)
+          return async () => { rpcHandlers.delete(route.path) }
+        },
+      },
+    },
+  })
   const config = Config.parse({
     stateFile: 'metrics.json',
     strategy: 'quality',
+    health: { retryAfterMs },
     subscriptions: [{
       id: 'plan', windowHours: 5, windowAnchor: '2026-11-25T10:00:00.000Z', quotaLimitMilliUnits: 1500,
     }],
@@ -87,7 +103,7 @@ async function fixture() {
     assert.ok(commandHandler)
     return await commandHandler({ agent, rawInput } as CommandInvocation)
   }
-  return { directory, listeners, selections, agent, invokeCommand }
+  return { directory, listeners, rpcHandlers, selections, agent, invokeCommand, warnings }
 }
 
 describe('mounted plugin behavior', () => {
@@ -100,6 +116,43 @@ describe('mounted plugin behavior', () => {
       message: { source: { kind: 'user' }, content: [{ type: 'text', text: 'Implement and test a system-wide security refactor' }] },
     } as never)
     assert.deepEqual(selections, [{ provider: 'selected', model: 'heavy', reasoningEffort: 'high' }])
+  })
+
+  it('given_raw_validation_errors_when_logged_then_only_structured_codes_are_emitted', async () => {
+    const { warnings } = await fixture()
+    assert.ok(warnings.some(line => line.includes('validation UNKNOWN')))
+    assert.doesNotMatch(warnings.join('\n'), /secret provider detail/u)
+  })
+
+  it('given_partial_reasoning_support_when_validated_then_model_health_is_not_marked_unavailable', async () => {
+    const { rpcHandlers } = await fixture('max')
+    const reportRoute = rpcHandlers.get('/api/model-router/report')
+    assert.ok(reportRoute)
+    const response = await reportRoute(new Request('http://localhost/api/model-router/report', { method: 'POST', body: 'null' }))
+    const report = await response.json() as { routes: { model: string; health: { status: string } }[] }
+    assert.equal(report.routes.find(route => route.model === 'heavy')?.health.status, 'unknown')
+    assert.equal(report.routes.find(route => route.model === 'invalid')?.health.status, 'unhealthy')
+  })
+
+  it('given_startup_invalid_route_after_retry_cooldown_when_claimed_then_route_can_be_retried', async () => {
+    const { directory, listeners, selections, agent } = await fixture()
+    const claimed = listeners.get('agent/inbox/claimed')
+    assert.ok(claimed)
+    const message = { source: { kind: 'user' }, content: [{ type: 'text', text: 'Implement a security refactor' }] }
+    claimed({ agent, message } as never)
+    assert.equal(selections[0]?.provider, 'selected')
+    const path = join(directory, 'metrics.json')
+    const state = JSON.parse(await readFile(path, 'utf8')) as {
+      health: Record<string, { lastFailureAt?: string; lastSeenAt?: string }>
+    }
+    const failedAt = new Date(Date.now() - 60001).toISOString()
+    if (state.health['unavailable\0invalid'] !== undefined) {
+      state.health['unavailable\0invalid'].lastFailureAt = failedAt
+      state.health['unavailable\0invalid'].lastSeenAt = failedAt
+    }
+    await writeFile(path, JSON.stringify(state))
+    claimed({ agent, message } as never)
+    assert.equal(selections[1]?.provider, 'unavailable')
   })
 
   it('given_an_offloaded_image_when_claimed_then_a_text_only_route_remains_eligible', async () => {
@@ -151,6 +204,65 @@ describe('mounted plugin behavior', () => {
       if (index < 2) sessionEvent(agent.session as never, { type: 'turn/end' } as never)
     }
     assert.equal(selections.length, 3)
+  })
+
+  it('given_dashboard_routes_when_registered_then_they_use_owner_checked_connection_paths', async () => {
+    const { rpcHandlers } = await fixture()
+    assert.ok(rpcHandlers.has('/api/model-router/report'))
+    assert.ok(rpcHandlers.has('/api/model-router/set-routing'))
+  })
+
+  it('given_owner_fetch_when_pausing_and_resuming_then_claimed_tasks_follow_the_live_state', async () => {
+    const { listeners, rpcHandlers, selections, agent } = await fixture()
+    const setRouting = rpcHandlers.get('/api/model-router/set-routing')
+    const reportRoute = rpcHandlers.get('/api/model-router/report')
+    const claimed = listeners.get('agent/inbox/claimed')
+    assert.ok(setRouting)
+    assert.ok(reportRoute)
+    assert.ok(claimed)
+    const routingRequest = (enabled: unknown) => new Request('http://localhost/api/model-router/set-routing', {
+      method: 'POST', body: JSON.stringify({ enabled }),
+    })
+    const paused = await setRouting(routingRequest(false))
+    assert.equal(paused.status, 200)
+    const message = { source: { kind: 'user' }, content: [{ type: 'text', text: 'Implement a security refactor' }] }
+    claimed({ agent, message } as never)
+    assert.equal(selections.length, 0)
+    const reportResponse = await reportRoute(new Request('http://localhost/api/model-router/report', { method: 'POST', body: 'null' }))
+    const report = await reportResponse.json() as {
+      routingEnabled: boolean
+      routes: { health: { status: string } }[]
+    }
+    assert.equal(report.routingEnabled, false)
+    assert.ok(report.routes.some(route => route.health.status === 'unhealthy'))
+    await setRouting(routingRequest(true))
+    claimed({ agent, message } as never)
+    assert.equal(selections.length, 1)
+    const invalid = await setRouting(routingRequest('yes'))
+    assert.equal(invalid.status, 400)
+  })
+
+  it('given_late_cancellation_without_finish_when_stream_settles_then_health_does_not_degrade', async () => {
+    const { directory, listeners } = await fixture()
+    const streamListener = listeners.get('llm/stream')
+    assert.ok(streamListener)
+    const controller = new AbortController()
+    const options = markAgentLoopRequest({
+      provider: 'selected', model: 'heavy', messages: [],
+      sessionId: brandString<Agent['session']['id']>('session-1'), signal: controller.signal,
+    })
+    async function* response(): AsyncGenerator<StreamChunk> {
+      yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 3 } }
+      controller.abort()
+      throw new Error('cancelled transport')
+    }
+    const wrapped = streamListener(options as never, response as never)
+    assert.ok(typeof wrapped === 'object' && Symbol.asyncIterator in wrapped)
+    await assert.rejects(async () => { for await (const _chunk of wrapped) {} }, /cancelled transport/u)
+    const metrics = await MetricsStore.load(join(directory, 'metrics.json'), Config.parse({}))
+    assert.equal(metrics.snapshot().routes['selected\0heavy']?.aborted, 1)
+    assert.equal(metrics.snapshot().routes['selected\0heavy']?.failed, 0)
+    assert.equal(metrics.snapshot().health['selected\0heavy']?.consecutiveFailures, 0)
   })
 
   it('given_an_agent_loop_stream_when_drained_then_usage_and_outcome_are_persisted', async () => {

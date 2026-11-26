@@ -9,6 +9,7 @@ const subscriptionModel: ModelConfig = {
   model: 'k3.1-pro',
   capability: 5,
   speed: 3,
+  healthProbe: false,
   input: ['text', 'image'],
   reasoningEfforts: ['off', 'low', 'high', 'max'],
   billing: {
@@ -29,6 +30,7 @@ const paidModel: ModelConfig = {
   model: 'example/pro',
   capability: 5,
   speed: 5,
+  healthProbe: false,
   input: ['text', 'image'],
   reasoningEfforts: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
   billing: {
