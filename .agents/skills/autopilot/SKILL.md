@@ -1,6 +1,6 @@
 ---
 name: autopilot
-description: Deliver a reviewed first version through a draft PR and passing CI, with minimal conversation, independent review of every ticket, and a diagram-led explanation. Use only when the user explicitly selects this workflow.
+description: Deliver a reviewed first version through a draft PR and passing verification, with minimal conversation, independent review of every ticket, and a diagram-led explanation. Use only when the user explicitly selects this workflow.
 ---
 
 # Autopilot
@@ -15,7 +15,7 @@ Read the repository instructions and `docs/agents/build-first-version.md` if pre
 
 Trace the relevant business journey: participants, intended outcome, rules, state or money flow, existing behavior, and affected boundaries. Verify facts from sources and code; distinguish facts from assumptions. Stop exploration when that journey and observable acceptance conditions can be stated and remaining uncertainty is classified.
 
-Check that independent reviewers, the required verification tools, and PR/CI access exist. Use available purpose-built connectors or CLIs without assuming a particular vendor command. Missing capability is an explicit prerequisite, never invented evidence.
+Check that independent reviewers, the required verification tools, and PR access exist; check access to hosted verification only if the repository requires it. Use available purpose-built connectors or CLIs without assuming a particular vendor command. Missing capability is an explicit prerequisite, never invented evidence.
 
 Done when the objective, scope, sources, repository/base, constraints, and available verification path are recorded in the repository's canonical specification or task document.
 
@@ -53,12 +53,12 @@ Done when every in-scope ticket has a pass backed by evidence at its recorded ca
 
 Read [delivery.md](references/delivery.md). Verify the complete journey across tickets, perform independent Standards and Spec review of the full change against the fixed base, and repair findings. Revalidate tickets affected by later changes.
 
-Commit and push the intended change, create or update the relevant draft PR, and wait for all applicable checks at the **final PR head**. Follow the repository's expected gate inventory; absent, pending, skipped, cancelled, failing, or stale checks do not count as success. When an existing intended PR is already marked ready, preserve its state unless the user requested conversion; do not silently demote it. Reuse an open intended PR, never append new work to a merged PR.
+Commit and push the intended change, create or update the relevant draft PR, and verify all applicable checks at the **final PR head**, locally or on a hosted runner as directed by the repository adapter. Follow the repository's expected gate inventory; absent, pending, skipped, cancelled, failing, or stale checks do not count as success. When an existing intended PR is already marked ready, preserve its state unless the user requested conversion; do not silently demote it. Reuse an open intended PR, never append new work to a merged PR.
 
-Done when the final review, local verification, and applicable remote CI all cover the delivered head, and the diagram-led explanation is available with the draft PR and evidence links. Stop short of merge, deployment, and real funds.
+Done when the final review and all applicable verification cover the delivered head, and the diagram-led explanation is available with the draft PR and evidence links. Stop short of merge, deployment, and real funds.
 
 ## Resume or hand off an incomplete result
 
-Persist decisions, base/head, ticket states, artifact locations, and the exact next action in the existing specification/tickets. On resumption, verify them against the actual checkout, PR, and CI before continuing; invalidate stale acceptance. Context compaction does not reset authorization or completion criteria.
+Persist decisions, base/head, ticket states, artifact locations, and the exact next action in the existing specification/tickets. On resumption, verify them against the actual checkout, PR, and check results before continuing; invalidate stale acceptance. Context compaction does not reset authorization or completion criteria.
 
-If a prerequisite or permission remains unavailable, state the concrete blocker, completed work, unverified criteria, and resumption action. Keep the result explicitly partial. A runtime limit, missing reviewer, or missing CI cannot be converted into a successful first version.
+If a prerequisite or permission remains unavailable, state the concrete blocker, completed work, unverified criteria, and resumption action. Keep the result explicitly partial. A runtime limit, missing reviewer, or missing required verification cannot be converted into a successful first version.

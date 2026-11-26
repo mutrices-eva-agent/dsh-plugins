@@ -50,15 +50,21 @@ Input: an ordinary logic ticket with a specification, tests and diff, but no ext
 
 Observe: perform independent acceptance review rather than skipping the critic under the old optional-gauntlet rule.
 
+## given_local_only_repository_when_final_head_passes_then_delivers_without_ci
+
+Input: a fixture using the DSH Plugins adapter, with local checks and independent reviewers available but no hosted workflows or required status checks.
+
+Observe: run the applicable checks locally at the final head, record commands and results in the PR, and report it ready without waiting for a hosted check.
+
 ## given_changed_head_when_previous_ci_passes_then_waits
 
-Input: PR head B, successful checks for A, and a pending or missing expected check for B.
+Input: A fixture repository that explicitly requires hosted checks, PR head B, successful checks for A, and a pending or missing expected check for B.
 
 Observe: delivery stays incomplete until all applicable checks succeed for B. No last-green-run substitution; no missing-check-as-success assumption.
 
-## given_missing_reviewer_or_ci_when_delivering_then_reports_partial
+## given_missing_reviewer_or_required_verification_when_delivering_then_reports_partial
 
-Input: completed local implementation but no independent reviewer or unavailable hosting authentication.
+Input: completed local implementation but no independent reviewer or unavailable authentication for an explicitly required hosted check.
 
 Observe: identify the unavailable evidence, retain a resumable partial result, and never present self-review or local tests as independent review or remote CI.
 

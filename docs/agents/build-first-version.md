@@ -15,11 +15,11 @@ The per-ticket acceptance loop requires an independent read-only critic for ever
 - Use an authorized isolated feature branch or worktree and one owning committer. Do not edit someone else's checkout or commit directly to `main`.
 - The owning agent alone edits product files and commits. Independent reviewers receive no inherited builder conversation, do not edit product files, and do not mutate Git. Missing independent review leaves acceptance unverified.
 - Preserve unrelated branches and work. A previous PR that merged or closed is not the target for new work.
-- Do not deploy plugins, change active DSH profiles, enable paid probes, or perform financial operations as an implicit delivery step. The endpoint is a reviewed draft PR and passing CI.
+- Do not deploy plugins, change active DSH profiles, enable paid probes, or perform financial operations as an implicit delivery step. The endpoint is a reviewed draft PR with passing local checks.
 
 ## Context and artifacts
 
-Read `AGENTS.md`, the root and affected plugin READMEs, relevant source/tests, and the applicable workflow files. Inspect `docs/adr/` and `DESIGN.md` only when present and relevant.
+Read `AGENTS.md`, the root and affected plugin READMEs, relevant source/tests, and the local check instructions in the root README. Inspect `docs/adr/` and `DESIGN.md` only when present and relevant.
 
 - Specification: `docs/<feature>/spec.md`; use a short brief for small work.
 - Tickets: `docs/<feature>/issues/NN-<slug>.md`, with dependencies, the acceptance bar, evidence, and review verdict. Use `Status:` for triage and `Execution:` for `ready`, `building`, `reviewing`, `accepted`, or `blocked`.
@@ -32,7 +32,7 @@ Workflow configuration stays in English. Product documentation follows each plug
 
 Use `given_X_when_Y_then_Z` behavior tests and reproduce bug fixes with regressions. Preserve exact integer monetary/quota arithmetic, credential boundaries, session compatibility, provider failure semantics, and the default prohibition on paid health probes.
 
-For the model router, run `npm ci && npm run check` from `plugins/model-router`. Re-read `.github/workflows/model-router.yml` and any other affected workflow for the exact check inventory. The current model-router gate is `check`; later plugins own their applicable gates. Local checks, mounted DSH smoke tests, and remote CI are separate evidence.
+Run the [applicable local checks](../../README.md#development). Record each command, result, and tested commit. Mounted DSH smoke tests are separate evidence; no remote CI is expected.
 
 For UI, inspect the implemented interface as well as the mockup. Capture the same scenario, viewport, theme, and state for before/after evidence. A missing baseline or comparison leaves UI acceptance open.
 

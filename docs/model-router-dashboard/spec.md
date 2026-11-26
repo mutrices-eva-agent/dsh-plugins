@@ -22,7 +22,7 @@ Source request: build the previously absent stats dashboard and provider/model h
 ## Acceptance evidence
 
 - Behavior tests for backward-compatible metrics, daily aggregation, passive health transitions, routing exclusion/recovery, probe success/failure/cost accounting, and teardown.
-- Clean plugin `npm ci && npm run check` and applicable GitHub Actions at the final PR head.
+- Clean local plugin `npm ci && npm run check` at the final PR head.
 - Before capture at merged main `3cef52a` showing no dashboard, and after captures at the final candidate using the same DSH Web viewport/theme at 1440px and 390px.
 - Independent Standards and Spec review of the final candidate.
 
