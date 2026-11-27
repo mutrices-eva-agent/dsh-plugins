@@ -1,0 +1,29 @@
+# Jev and the DSH model router
+
+**Decision: keep local routing.** Jev is a credible candidate for assessing task difficulty, but there is no measured improvement against the DSH baseline. Start with an offline comparison on synthetic or explicitly approved redacted tasks before adding a live dependency.
+
+## What Jev could add
+
+The [DSH classifier](https://github.com/mutrices-eva-agent/dsh-plugins/blob/73dc5c860aff8fcc8c7e9fdfcb449b9fed0e0017/plugins/model-router/src/routing.ts#L43-L77) scores length, keywords and attachment counts. A short request can require deep work, and a long request can be routine. Jev could make that distinction using a fixed difficulty rubric. DSH would still choose the model and effort and enforce explicit pins, provider health, capability, input type, context and subscription limits. The classifier would never receive credentials, quota state or a provider catalog.
+
+| Option | Fit for DSH |
+| --- | --- |
+| [Direct TypeSafe Jev](https://docs.typesafe.ai/models) | `jev-1.14.0` via [System One](https://docs.typesafe.ai/api/system-one.md). Returns a typed choice with per-option probabilities. Listed at $0.042 per million billed input tokens, with free output. Requires a TypeSafe key and separate billing. |
+| [Jev through OpenRouter Decisions](https://openrouter.ai/docs/guides/community/jev.md) | `typesafe/jev-1.14` via the [Decisions endpoint](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request.md), not chat completions. Uses OpenRouter API credits, separate from Codex subscription quota. The `/alpha/decisions` schema can change. |
+| [OpenRouter Jev Router](https://openrouter.ai/docs/guides/routing/routers/jev-router.md) | `typesafe/jev-router` sends the request to an OpenRouter-selected model and returns its answer. Cost tiers are preferences, not caps; the router can relax its include list. It cannot draw on DSH's locally configured subscriptions. DSH's [metering](https://github.com/mutrices-eva-agent/dsh-plugins/blob/73dc5c860aff8fcc8c7e9fdfcb449b9fed0e0017/plugins/model-router/src/index.ts#L160-L204) keys on the requested route, not the upstream model selected behind a router alias. Do not substitute it for local routing. |
+
+The [OpenRouter routing benchmarks](https://openrouter.ai/benchmarks/routers) compare its own router configurations and model baselines, not this plugin. TypeSafe's [Jev 1.14 release](https://typesafe.ai/blog/jev-1-14) also recommends application-specific evaluation. Those results show plausibility, not savings or better task outcomes for DSH. Compared with a local heuristic, a Jev call always adds paid usage and a network dependency. It is worthwhile only if the better choices outweigh that overhead.
+
+## Where it can and cannot run
+
+The [router selects and reserves quota at inbox claim](https://github.com/mutrices-eva-agent/dsh-plugins/blob/73dc5c860aff8fcc8c7e9fdfcb449b9fed0e0017/plugins/model-router/src/index.ts#L109-L148). In the installed Harness, the claim event is synchronous and the loop captures model selection immediately afterward. The awaited pre-step callback already receives the captured selection; the request callback cannot change the provider, model or reasoning effort. An async claim handler can therefore return too late and accidentally affect a subsequent request. Do not add one.
+
+If evaluation justifies live use, consider a precomputed advisory score only when the result is already available at claim, bound to that exact message and classifier version, and within its expiry. Measure cache-ready coverage, especially on immediate claims. Low coverage would require a supported awaited host hook before model capture, not a late selection. Keep previews local, recheck health and quota at claim, and use the existing local result for timeout, cancellation, invalid output, or low confidence. A late answer must never change routing.
+
+## How to test improvement
+
+1. **Compare classifiers offline.** Label a representative holdout (start with 300 tasks: short hard, long easy, ambiguous, multilingual and attachment-dependent cases). Compare current rules, tuned local rules and pinned Jev on the same examples. Use five difficulty bands plus “insufficient information.” Check under-routing separately from over-routing and tune on a separate split. A [choice probability](https://docs.typesafe.ai/confidence.md#choice) is not proof of accuracy on DSH prompts.
+2. **Constrain the evaluation.** Evaluate synthetic or approved redacted task text; do not send live prompts, attachments, transcripts, code, secrets or billing metadata. Confirm retention terms before using real inputs: [TypeSafe's model docs](https://docs.typesafe.ai/models#data-handling) say it does not train on requests or responses and link to retention terms; [OpenRouter's retention rules](https://openrouter.ai/docs/guides/privacy/provider-logging) depend on the provider endpoint. Budget requests and billed usage in advance. Measure timeout rate and p95 latency; use a hard deadline, no foreground retries, and a local fallback if a pilot goes live.
+3. **Measure actual task outcomes before turning it on.** In a separately authorized paired trial, compare task acceptance by tests or blind review, retries and rework, cash per accepted task (including classification), subscription quota per accepted task separately, and end-to-end latency. Check that pins, capability, health and quota rules remain unchanged under concurrent claims and failures. Agree on an improvement threshold and latency budget up front; for example, 10% lower cash per accepted task with at most a two-percentage-point loss in task success, and no material quota or latency regression. If the evidence is inconclusive or the tuned local baseline does as well, keep Jev off.
+
+No live requests were sent, no credentials were read, and no routing or production settings were changed for this review.
