@@ -17,6 +17,8 @@ dsh plugin --profile superagent add "$PWD"
 
 ## 路由
 
+使用兼容的 Superagent 分支时，在路由器配置中加入 `sourceKinds: [user, dsh-superagent]`，并配置可选模型。路由只处理新的工作任务，不处理状态消息或普通转发。用户明确指定的模型优先；没有合适的路由时，工作会话保留当前模型（新会话使用 Executor 默认模型）。
+
 每个模型需要声明：
 
 - `capability` 与 `speed`：1 至 5 的相对整数评分。
