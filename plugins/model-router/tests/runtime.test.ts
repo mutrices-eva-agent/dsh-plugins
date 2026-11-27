@@ -13,7 +13,7 @@ import { apply, Config, MetricsStore } from '../src/index.js'
 type Listener = (...args: never[]) => void | AsyncIterable<StreamChunk>
 type FetchRouteHandler = (request: Request) => Promise<Response>
 
-async function fixture(unsupportedEffort?: string, retryAfterMs = 60000) {
+async function fixture(unsupportedEffort?: string, retryAfterMs = 60000, sourceKinds?: string[]) {
   const directory = await mkdtemp(join(tmpdir(), 'model-router-runtime-'))
   const listeners = new Map<string, Listener>()
   const rpcHandlers = new Map<string, FetchRouteHandler>()
@@ -58,6 +58,7 @@ async function fixture(unsupportedEffort?: string, retryAfterMs = 60000) {
   const config = Config.parse({
     stateFile: 'metrics.json',
     strategy: 'quality',
+    ...(sourceKinds === undefined ? {} : { sourceKinds }),
     health: { retryAfterMs },
     subscriptions: [{
       id: 'plan', windowHours: 5, windowAnchor: '2026-11-25T10:00:00.000Z', quotaLimitMilliUnits: 1500,
@@ -115,6 +116,20 @@ describe('mounted plugin behavior', () => {
       agent,
       message: { source: { kind: 'user' }, content: [{ type: 'text', text: 'Implement and test a system-wide security refactor' }] },
     } as never)
+    assert.deepEqual(selections, [{ provider: 'selected', model: 'heavy', reasoningEffort: 'high' }])
+  })
+
+  it('given_opted_in_superagent_assignments_when_claimed_then_only_unpinned_assignments_are_routed', async () => {
+    const { listeners, selections, agent } = await fixture(undefined, 60000, ['user', 'dsh-superagent'])
+    const claim = listeners.get('agent/inbox/claimed')!
+    const send = (source: object) => claim({ agent, message: {
+      source: { kind: 'dsh-superagent', ...source },
+      content: [{ type: 'text', text: 'Implement a security refactor' }],
+    } } as never)
+    send({})
+    send({ assignment: true, modelPinned: true })
+    assert.deepEqual(selections, [])
+    send({ assignment: true })
     assert.deepEqual(selections, [{ provider: 'selected', model: 'heavy', reasoningEffort: 'high' }])
   })
 

@@ -120,7 +120,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   ctx.on('agent/inbox/claimed', ({ agent, message }) => {
     activeSessions.add(agent.session.id)
-    if (!routingEnabled || automatic.get(agent.session.id) === false || !config.sourceKinds.includes(message.source.kind)) return
+    const source: { kind: string; assignment?: unknown; modelPinned?: unknown } = message.source
+    if (!routingEnabled || automatic.get(agent.session.id) === false || !config.sourceKinds.includes(source.kind)) return
+    if (source.kind === 'dsh-superagent' && (source.assignment !== true || source.modelPinned === true)) return
     let reservationId: string | undefined
     try {
       const decision = choose(taskInput(message))

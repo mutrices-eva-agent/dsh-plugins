@@ -37,6 +37,10 @@ The default classifier combines configurable text signals, length thresholds, an
 
 The default weights are quality 35, speed 20, cash 25, and quota 20. Balanced cost uses pay-as-you-go estimates and, when subscription window cost and quota limit are known, allocated subscription value. Set weights to match the desired tradeoff.
 
+### Superagent workers
+
+With the compatible Superagent fork, add `sourceKinds: [user, dsh-superagent]` to the router profile config and configure eligible `models`. The router considers new worker assignments, not status notices, tool continuations, or ordinary relays. Superagent applies an explicit human model choice before dispatch and marks that message so routing will not replace it. Without an eligible decision, the worker keeps its current model (the Executor model on a new worker).
+
 ## Dashboard
 
 The Web client adds **Model routes** to the DSH left sidebar. The dashboard shows actual request totals, outcomes, recent daily output usage, exact cash and current-window quota, route efficiency, user-rated success, and health. Refresh reads the owner-only authenticated host endpoint and never sends a model request. **Pause routing** suspends automatic model selection without stopping metering or health monitoring. Loading, empty, error, narrow, and populated states are supported.
