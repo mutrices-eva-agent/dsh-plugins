@@ -79,6 +79,12 @@ Active probes are off by default. Set `healthProbe: true` on an individual model
 
 `dailyRetentionDays` bounds UTC daily usage buckets; old v2 files load with empty daily/health sections and retain all existing totals.
 
+## Offline assessment replay (experimental)
+
+`replayTask` in [src/replay.ts](src/replay.ts) compares the local classifier with saved, normalized advice for the same task, configured routes and quota snapshot. It does not run Jev, choose a route for any live session, or prove an improvement in task success. For a reproducible example, run `node --import tsx --test tests/replay.test.ts` after installing dev dependencies.
+
+Saved advice is `{ difficulty: 1..5, probability: 0..1, needsVision?: boolean }`, not a raw vendor response. Absent, invalid or below-threshold advice uses the local result. A physical image still requires vision, even when advice says otherwise. Confident advice that refers to a needed image with none supplied returns no advised route and flags the missing image. The two outputs show the suggested model and effort, with cash and quota **estimates**, not observed usage. Replay does not reserve quota or import real subscription data.
+
 ## Limits
 
 - Heaviness scoring is a transparent heuristic, not a semantic model evaluation. Tune `classification` for the workload.
