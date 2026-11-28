@@ -85,6 +85,8 @@ Active probes are off by default. Set `healthProbe: true` on an individual model
 
 Saved advice is `{ difficulty: 1..5, probability: 0..1, needsVision?: boolean }`, not a raw vendor response. Absent, invalid or below-threshold advice uses the local result. A physical image still requires vision, even when advice says otherwise. Confident advice that refers to a needed image with none supplied returns no advised route and flags the missing image. The two outputs show the suggested model and effort, with cash and quota **estimates**, not observed usage. Replay does not reserve quota or import real subscription data.
 
+An optional `subscriptionFirst` replay policy only considers subscription routes marked as verified by the fixture. That mark represents fresh included quota for the serving account and a guarantee against purchased-credit fallback; replay does not check either against a provider. A pay-as-you-go route needs an explicit estimated-cash cap and comparable acceptance evidence for the exact model and effort. It can replace an eligible subscription only if its lower acceptance bound is at least 10× the highest upper bound across eligible subscription routes. Bounds are integer basis points from the same task cohort and acceptance rubric, not Jev confidence or leaderboard scores. Missing or ambiguous evidence, a zero comparison bound, or no eligible subscription comparator cannot justify a paid override. The baseline column still shows existing v1 behavior.
+
 ## Limits
 
 - Heaviness scoring is a transparent heuristic, not a semantic model evaluation. Tune `classification` for the workload.
